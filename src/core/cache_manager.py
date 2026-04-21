@@ -241,6 +241,170 @@ def _default_mock(brand: str, city: str) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Brand size estimation (Phase 1.5)
+# ---------------------------------------------------------------------------
+
+BRAND_METADATA_TTL_SEC = 90 * 24 * 3600  # 90 days
+
+
+def estimate_brand_size(
+    brand: str,
+    force_refresh: bool = False,
+) -> dict:
+    """
+    Fast, cheap store-count estimate. Decision tree:
+
+      1. Cache hit (<90 days old, not forced)       -> return cached.
+      2. Brand has `headline_count_selector`        -> Playwright headline read.
+      3. Brand in registry (no headline)            -> full scrape, count.
+      4. Brand NOT in registry                      -> Places Text Search,
+                                                       paginated up to 3 pages.
+      5. All methods fail                           -> count=None, conf=0.
+
+    Returns a dict with:
+      brand, total_stores_estimate, source, confidence, last_refreshed,
+      known_cities, coverage_pct, is_stale, fetch_latency_ms.
+    """
+    import time as _time
+
+    start = _time.time()
+
+    if not force_refresh:
+        cached = db.get_brand_metadata(brand)
+        if cached and cached.get("last_refreshed"):
+            age = _time.time() - float(cached["last_refreshed"])
+            if age < BRAND_METADATA_TTL_SEC:
+                return _shape_brand_size_result(brand, cached, is_stale=False, latency_ms=0)
+
+    total: Optional[int] = None
+    source = "unknown"
+    confidence = 0.0
+    full_scrape_ts: Optional[float] = None
+
+    from src.fetchers import brand_scraper
+
+    info = brand_scraper.get_brand_info(brand)
+    if info is not None:
+        if info.get("headline_count_selector"):
+            try:
+                total = brand_scraper.get_headline_count(brand)
+            except Exception as e:
+                logger.info("[brand_size] headline read failed for %s: %s", brand, e)
+                total = None
+            if total is not None:
+                source = "scraper_headline"
+                confidence = 0.95
+
+        if total is None and info.get("extraction_method") in {"api", "html", "playwright"}:
+            total, full_scrape_ts = _estimate_via_full_scrape(brand)
+            if total is not None:
+                source = "full_scrape"
+                confidence = 1.0
+
+    if total is None:
+        total, hit_cap = _estimate_via_places_pagination(brand)
+        if total is not None:
+            source = "places_pagination_cap"
+            confidence = 0.5 if hit_cap else 0.8
+
+    latency_ms = int((_time.time() - start) * 1000)
+
+    if total is not None:
+        db.upsert_brand_metadata(
+            brand=brand,
+            total_stores_estimate=total,
+            source=source,
+            confidence=confidence,
+            full_scrape_completed_at=full_scrape_ts,
+        )
+
+    cached = db.get_brand_metadata(brand) or {
+        "total_stores_estimate": total,
+        "total_stores_source": source,
+        "estimate_confidence": confidence,
+        "last_refreshed": _time.time(),
+        "known_cities": [],
+    }
+    return _shape_brand_size_result(brand, cached, is_stale=False, latency_ms=latency_ms)
+
+
+def _shape_brand_size_result(
+    brand: str, cached: dict, is_stale: bool, latency_ms: int,
+) -> dict:
+    total = cached.get("total_stores_estimate")
+    enriched = db.count_enriched_stores_for_brand(brand)
+    coverage = None
+    if total and total > 0:
+        coverage = round(enriched / total * 100, 1)
+    return {
+        "brand": brand,
+        "total_stores_estimate": total,
+        "source": cached.get("total_stores_source"),
+        "confidence": cached.get("estimate_confidence") or 0.0,
+        "last_refreshed": cached.get("last_refreshed"),
+        "known_cities": cached.get("known_cities", []),
+        "coverage_pct": coverage,
+        "is_stale": is_stale,
+        "fetch_latency_ms": latency_ms,
+    }
+
+
+def _estimate_via_full_scrape(brand: str) -> tuple[Optional[int], Optional[float]]:
+    """Run the full registry-driven scrape once; count results as the size."""
+    import time as _time
+    try:
+        from src.fetchers import brand_scraper
+        df = brand_scraper.scrape_brand_stores(brand, cities=[])
+    except Exception as e:
+        logger.info("[brand_size] full scrape failed for %s: %s", brand, e)
+        return None, None
+    if df is None or df.empty:
+        return None, None
+    return int(len(df)), _time.time()
+
+
+def _estimate_via_places_pagination(brand: str) -> tuple[Optional[int], bool]:
+    """
+    Fallback for brands absent from the scraper registry: paginate Google
+    Places nationally and use the total row count as a size estimate.
+
+    Returns (count_or_None, hit_pagination_cap). `hit_pagination_cap` flags
+    that the true count is >= returned value (Google caps at 60 rows via
+    3 pages of 20).
+    """
+    try:
+        from src.fetchers import google_places
+    except Exception:
+        return None, False
+
+    seen: set[str] = set()
+    total_rows = 0
+    pages_seen = 0
+    hit_cap = False
+
+    for city in ("Delhi", "Mumbai", "Bangalore"):
+        try:
+            records = google_places.search_text(brand, city, max_pages=3)
+        except Exception as e:
+            logger.info("[brand_size] places fallback error in %s: %s", city, e)
+            records = []
+        if not records:
+            continue
+        for r in records:
+            pid = r.get("place_id") or f"{r.get('title')}|{r.get('address')}"
+            if pid and pid not in seen:
+                seen.add(pid)
+                total_rows += 1
+        pages_seen += 1
+        if len(records) >= 60:
+            hit_cap = True
+
+    if total_rows == 0:
+        return None, False
+    return total_rows, hit_cap
+
+
+# ---------------------------------------------------------------------------
 # Observability helpers (used by the Streamlit sidebar)
 # ---------------------------------------------------------------------------
 

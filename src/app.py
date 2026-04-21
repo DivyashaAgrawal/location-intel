@@ -113,6 +113,34 @@ def render() -> None:
             else:
                 st.caption("No fetches recorded this run.")
 
+        brand_sizes = result.get("brand_sizes") or {}
+        if brand_sizes:
+            for brand, size in brand_sizes.items():
+                total = size.get("total_stores_estimate")
+                coverage = size.get("coverage_pct")
+                source = size.get("source") or "unknown"
+                cities_queried = result["parsed_query"].get("geography", {}).get("filter", [])
+                brand_rows = raw[raw["brand"] == brand] if "brand" in raw.columns else raw.iloc[0:0]
+                if total is None:
+                    st.caption(
+                        f"**{brand}** - total size not available (source: {source}). "
+                        f"Currently showing {len(brand_rows)} stores in "
+                        f"{', '.join(cities_queried) or 'query'}."
+                    )
+                else:
+                    pieces = [
+                        f"**{brand}** (~{total:,} stores in India, source: {source})",
+                        f"Currently showing: {len(brand_rows)} stores in "
+                        f"{', '.join(cities_queried) or 'query'}",
+                    ]
+                    if coverage is not None:
+                        enriched_count = int(round(coverage / 100 * total))
+                        pieces.append(
+                            f"DB coverage: {enriched_count} of {total:,} stores "
+                            f"enriched ({coverage}%)"
+                        )
+                    st.caption(" \u00b7 ".join(pieces))
+
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Stores", len(raw))
         c2.metric("Brands", raw["brand"].nunique() if "brand" in raw.columns else 0)

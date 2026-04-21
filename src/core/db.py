@@ -86,6 +86,18 @@ CREATE TABLE IF NOT EXISTS source_cache (
     PRIMARY KEY (brand, city, source)
 );
 
+CREATE TABLE IF NOT EXISTS brand_metadata (
+    brand                       TEXT PRIMARY KEY,
+    total_stores_estimate       INTEGER,
+    total_stores_source         TEXT,           -- 'scraper_headline' | 'full_scrape' | 'places_pagination_cap' | 'manual'
+    estimate_confidence         REAL,           -- 0.0 .. 1.0
+    last_refreshed              REAL NOT NULL,
+    known_cities_json           TEXT,           -- JSON list of cities we've enriched so far
+    full_scrape_completed_at    REAL
+);
+
+CREATE INDEX IF NOT EXISTS idx_brand_metadata_refreshed ON brand_metadata(last_refreshed DESC);
+
 CREATE TABLE IF NOT EXISTS api_call_log (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
     source                  TEXT NOT NULL,
@@ -439,6 +451,137 @@ def cumulative_api_cost(db_path: Optional[str] = None) -> dict[str, Any]:
             for r in by_source
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Brand metadata (Phase 1.5)
+# ---------------------------------------------------------------------------
+
+def _brand_key(brand: str) -> str:
+    return (brand or "").strip()
+
+
+def get_brand_metadata(
+    brand: str, db_path: Optional[str] = None
+) -> Optional[dict[str, Any]]:
+    """Return the stored brand_metadata row as a dict, or None."""
+    conn = _get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT * FROM brand_metadata WHERE brand = ?",
+            (_brand_key(brand),),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    d = dict(row)
+    try:
+        d["known_cities"] = json.loads(d.get("known_cities_json") or "[]")
+    except Exception:
+        d["known_cities"] = []
+    return d
+
+
+def upsert_brand_metadata(
+    brand: str,
+    total_stores_estimate: Optional[int],
+    source: str,
+    confidence: float,
+    known_cities: Optional[list[str]] = None,
+    full_scrape_completed_at: Optional[float] = None,
+    db_path: Optional[str] = None,
+) -> None:
+    """Insert or update a brand_metadata row. `last_refreshed` is stamped now."""
+    conn = _get_conn(db_path)
+    try:
+        existing = conn.execute(
+            "SELECT known_cities_json, full_scrape_completed_at "
+            "FROM brand_metadata WHERE brand = ?",
+            (_brand_key(brand),),
+        ).fetchone()
+
+        if known_cities is None and existing is not None:
+            try:
+                known_cities = json.loads(existing["known_cities_json"] or "[]")
+            except Exception:
+                known_cities = []
+        cities_json = json.dumps(sorted(set(known_cities or [])))
+
+        if full_scrape_completed_at is None and existing is not None:
+            full_scrape_completed_at = existing["full_scrape_completed_at"]
+
+        conn.execute(
+            """
+            INSERT INTO brand_metadata
+              (brand, total_stores_estimate, total_stores_source,
+               estimate_confidence, last_refreshed, known_cities_json,
+               full_scrape_completed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(brand) DO UPDATE SET
+              total_stores_estimate = excluded.total_stores_estimate,
+              total_stores_source   = excluded.total_stores_source,
+              estimate_confidence   = excluded.estimate_confidence,
+              last_refreshed        = excluded.last_refreshed,
+              known_cities_json     = excluded.known_cities_json,
+              full_scrape_completed_at = excluded.full_scrape_completed_at
+            """,
+            (
+                _brand_key(brand),
+                int(total_stores_estimate) if total_stores_estimate is not None else None,
+                source,
+                float(confidence),
+                time.time(),
+                cities_json,
+                full_scrape_completed_at,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def add_known_city_for_brand(
+    brand: str, city: str, db_path: Optional[str] = None
+) -> None:
+    """Append `city` to the brand's known_cities list (idempotent)."""
+    meta = get_brand_metadata(brand, db_path=db_path)
+    known = set(meta.get("known_cities", [])) if meta else set()
+    if city and city not in known:
+        known.add(city)
+        upsert_brand_metadata(
+            brand=brand,
+            total_stores_estimate=(meta or {}).get("total_stores_estimate"),
+            source=(meta or {}).get("total_stores_source") or "manual",
+            confidence=(meta or {}).get("estimate_confidence") or 0.0,
+            known_cities=sorted(known),
+            db_path=db_path,
+        )
+
+
+def count_enriched_stores_for_brand(
+    brand: str,
+    cities: Optional[list[str]] = None,
+    db_path: Optional[str] = None,
+) -> int:
+    """Store rows for `brand` (optionally within `cities`)."""
+    conn = _get_conn(db_path)
+    try:
+        if cities:
+            placeholders = ",".join("?" * len(cities))
+            row = conn.execute(
+                f"SELECT COUNT(*) AS n FROM stores "
+                f"WHERE brand = ? AND city IN ({placeholders})",
+                [brand] + list(cities),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM stores WHERE brand = ?",
+                (brand,),
+            ).fetchone()
+    finally:
+        conn.close()
+    return int(row["n"]) if row else 0
 
 
 def db_stats(db_path: Optional[str] = None) -> dict[str, Any]:

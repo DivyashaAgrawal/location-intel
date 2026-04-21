@@ -4,7 +4,7 @@ import logging
 
 import pandas as pd
 from src.nlu import parse_query
-from src.core.cache_manager import smart_fetch
+from src.core.cache_manager import estimate_brand_size, smart_fetch
 from src.analysis.reconciler import reconcile, reconciliation_report
 from src.analysis.competitor import run_competitor_analysis
 from src.analysis.pincode_mapper import enrich_with_pincodes
@@ -63,10 +63,28 @@ def run_pipeline(
         "reconciliation_report": {"status": "no data"},
         "competitor_analysis": None,
         "fetch_sources": {},
+        "brand_sizes": {},
     }
 
     if query_type == "brand" and not brands:
         return empty_result
+
+    brand_sizes: dict[str, dict] = {}
+    if query_type == "brand":
+        for brand in brands:
+            try:
+                size = estimate_brand_size(brand)
+            except Exception as e:
+                logger.warning(f"brand-size estimate failed for {brand}: {e}")
+                size = {"brand": brand, "total_stores_estimate": None, "confidence": 0.0}
+            brand_sizes[brand] = size
+            est = size.get("total_stores_estimate")
+            logger.info(
+                f"Brand size for {brand}: "
+                f"~{est if est is not None else 'unknown'} stores "
+                f"(source={size.get('source')}, "
+                f"confidence={size.get('confidence')})"
+            )
 
     raw_records_by_brand: dict[str, pd.DataFrame] = {}
     fetch_sources: dict[tuple[str, str], str] = {}
@@ -227,4 +245,5 @@ def run_pipeline(
         "reconciliation_report": recon_report,
         "competitor_analysis": competitor_analysis,
         "fetch_sources": {f"{b}|{c}": s for (b, c), s in fetch_sources.items()},
+        "brand_sizes": brand_sizes,
     }

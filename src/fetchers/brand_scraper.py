@@ -188,6 +188,17 @@ SCRAPER_HEADERS = {
 }
 
 
+def get_headline_count(brand: str) -> int | None:
+    """Read the total store count from the brand locator page header.
+
+    Thin wrapper over `brand_scraper_js.get_headline_count` that keeps the
+    import path stable for Phase 1.5 callers. Requires Playwright; returns
+    None if unavailable or extraction fails.
+    """
+    from src.fetchers import brand_scraper_js
+    return brand_scraper_js.get_headline_count(brand)
+
+
 def get_brand_info(brand: str) -> dict | None:
     """Look up a brand in the registry. Fuzzy matches on name."""
     if brand in BRAND_REGISTRY:
