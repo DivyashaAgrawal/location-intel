@@ -56,7 +56,9 @@ def _fetch_brand_website(query: str, city: str) -> list[dict]:
     info = brand_scraper.get_brand_info(query)
     if info is None:
         return []
-    if info.get("extraction_method") in {"js_rendered", "blocked"}:
+    # `playwright`-method brands run via scrape_brand_stores -> brand_scraper_js.
+    # `blocked` brands short-circuit so reconciliation falls through to Google/Serper/OSM.
+    if info.get("extraction_method") == "blocked":
         return []
 
     try:

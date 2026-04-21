@@ -1,15 +1,16 @@
 """
 Brand Website Scraper: Extract store locations from brand websites.
 
-Strategy per brand:
-1. Try the brand's store locator API (many use hidden JSON endpoints)
-2. Fall back to scraping HTML + Ollama to parse into structured data
-3. If JS-rendered, flag for Playwright (not in prototype scope)
+Strategy per brand, in order of preference:
+1. `api`        -- hit a known JSON endpoint directly (cheapest)
+2. `html`       -- fetch HTML + Ollama to parse into structured data
+3. `playwright` -- render the page headlessly, then parse the rendered DOM
+                   (delegates to `brand_scraper_js`; requires playwright)
+4. `blocked`    -- marked unreachable; adapter returns [] so multi-source
+                   reconciliation silently falls through to other sources.
 
-Each brand entry has:
-- store_locator_url: the public-facing page
-- api_url: the underlying API endpoint (if discoverable)
-- extraction_method: "api" | "html" | "js_rendered"
+`js_rendered` is a deprecated alias for `playwright`; the dispatcher remaps
+it automatically with a warning.
 """
 from __future__ import annotations
 
@@ -46,11 +47,27 @@ BRAND_REGISTRY = {
     },
     "Starbucks": {
         "store_locator_url": "https://www.starbucks.in/store-locator",
+        "locator_url": "https://www.starbucks.in/store-locator",
         "api_url": None,
-        "extraction_method": "js_rendered",
+        "extraction_method": "playwright",
         "domain": "starbucks.in",
-        "notes": "JS-rendered; Playwright required. Also SSL handshake fails in prototype client.",
+        "notes": (
+            "JS-rendered. Selectors below are best-guess from public DOM "
+            "patterns; verify on live site and adjust before production use."
+        ),
         "last_verified": "2026-04-20",
+        "wait_selector": ".store-result-item, .store-card, [data-testid='store-card']",
+        "item_selector": ".store-result-item, .store-card, [data-testid='store-card']",
+        "fields": {
+            "title": ".store-name, h3, .name",
+            "address": ".store-address, .address",
+            "phone": ".store-phone, .phone",
+            "city": ".store-city, .city",
+        },
+        "load_more_selector": ".load-more-btn, button:has-text('Load More')",
+        "max_clicks": 50,
+        "headline_count_selector": ".store-count, .total-stores, .result-count",
+        "headline_count_regex": r"(\d[\d,]*)\s*stores?",
     },
     "Da Milano": {
         "store_locator_url": "https://www.damilano.com/pages/store-locator",
@@ -94,19 +111,51 @@ BRAND_REGISTRY = {
     },
     "KFC": {
         "store_locator_url": "https://online.kfc.co.in/store-locator",
+        "locator_url": "https://online.kfc.co.in/store-locator",
         "api_url": None,
-        "extraction_method": "js_rendered",
+        "extraction_method": "playwright",
         "domain": "kfc.co.in",
-        "notes": "JS-rendered; Playwright required. Also times out for this client.",
+        "notes": (
+            "JS-rendered. Selectors below are best-guess from public DOM "
+            "patterns; verify on live site and adjust before production use."
+        ),
         "last_verified": "2026-04-20",
+        "wait_selector": ".store-card, .restaurant-card, [data-store-id]",
+        "item_selector": ".store-card, .restaurant-card, [data-store-id]",
+        "fields": {
+            "title": ".store-name, .restaurant-name, h3",
+            "address": ".store-address, .address, .location-address",
+            "phone": ".store-phone, .phone",
+            "city": ".store-city, .city",
+        },
+        "load_more_selector": "button:has-text('Show More'), .load-more",
+        "max_clicks": 50,
+        "headline_count_selector": ".store-count, .total-count, .results-count",
+        "headline_count_regex": r"(\d[\d,]*)\s*(?:stores?|restaurants?|outlets?)",
     },
     "Pizza Hut": {
         "store_locator_url": "https://www.pizzahut.co.in/store-locator",
+        "locator_url": "https://www.pizzahut.co.in/store-locator",
         "api_url": None,
-        "extraction_method": "js_rendered",
+        "extraction_method": "playwright",
         "domain": "pizzahut.co.in",
-        "notes": "JS-rendered. Same parent company as KFC (Yum Brands).",
+        "notes": (
+            "JS-rendered. Same parent company as KFC (Yum Brands). Selectors "
+            "below are best-guess; verify on live site before production use."
+        ),
         "last_verified": "2026-04-20",
+        "wait_selector": ".store-card, .outlet-card, [data-store-id]",
+        "item_selector": ".store-card, .outlet-card, [data-store-id]",
+        "fields": {
+            "title": ".store-name, .outlet-name, h3",
+            "address": ".store-address, .address",
+            "phone": ".store-phone, .phone",
+            "city": ".store-city, .city",
+        },
+        "load_more_selector": "button:has-text('Load More'), .load-more",
+        "max_clicks": 50,
+        "headline_count_selector": ".store-count, .total-count, .results-count",
+        "headline_count_regex": r"(\d[\d,]*)\s*(?:stores?|outlets?)",
     },
     "Bata": {
         "store_locator_url": "https://www.bata.in/store-locator",
@@ -368,16 +417,31 @@ def scrape_brand_stores(
         return pd.DataFrame()
 
     method = info["extraction_method"]
+    # `js_rendered` is the pre-Playwright spelling; treat identically.
+    if method == "js_rendered":
+        logger.info(f"  {brand}: remapping deprecated 'js_rendered' to 'playwright'")
+        method = "playwright"
+
     logger.info(f"  Scraping {brand} website ({method})...")
 
     if method == "api" and info.get("api_url"):
         stores = scrape_brand_api(brand, info["api_url"], cities)
     elif method == "html":
         stores = scrape_brand_html(brand, info["store_locator_url"], cities)
-    elif method == "js_rendered":
-        logger.info(f"    {brand} requires JS rendering (Playwright). Skipping in prototype.")
-        logger.info(f"    Store locator: {info['store_locator_url']}")
-        return pd.DataFrame()
+    elif method == "playwright":
+        from src.fetchers import brand_scraper_js
+        if not brand_scraper_js.PLAYWRIGHT_AVAILABLE:
+            logger.warning(
+                f"    Playwright not installed; cannot scrape {brand}. "
+                "Install with `pip install playwright && playwright install chromium`."
+            )
+            return pd.DataFrame()
+        df = brand_scraper_js.scrape_with_playwright(brand, cities)
+        if df.empty:
+            logger.info(f"    No stores extracted from {brand} via Playwright")
+        else:
+            logger.info(f"    Extracted {len(df)} stores from {brand} via Playwright")
+        return df
     elif method == "blocked":
         logger.warning(
             f"    {brand} is marked 'blocked' in the registry "
