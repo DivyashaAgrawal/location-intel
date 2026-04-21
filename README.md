@@ -76,17 +76,50 @@ Core modules:
 
 ## 4. Data sources
 
+Priority order, highest to lowest. Earlier sources short-circuit later ones.
+
 | Source | Role | Cost |
 |---|---|---|
-| Brand websites | First-party addresses, pincodes (where available) | Free |
-| Google Places API v1 | Primary maps source: locations, ratings, reviews | ~$0.032/call (post free tier) |
+| Brand websites (HTTP) | Authoritative national footprint for brands with stable APIs | Free |
+| Brand websites (Playwright) | Same, for JS-rendered locators (Starbucks, KFC, Pizza Hut) | Free |
+| Google Places API v1 | Enrichment: ratings, phone, reviews for stores in queried cities | ~$0.032/call (post free tier) |
 | Serper.dev Maps | Fallback when Google Places is empty for a city | Free tier: 2,500 queries; ~$0.003/call after |
-| OpenStreetMap (Overpass) | Gap-fill + cross-validation | Free (rate-limited) |
+| OpenStreetMap (Overpass) | Last-resort gap-fill | Free (rate-limited) |
 | Nominatim (OSM) | Reverse geocoding lat/lng -> pincode | Free (1 req/sec) |
 | Outscraper | Full review text (optional, stub) | ~$0.01/call |
 
 Every outbound call is logged to `api_call_log` with an estimated cost, so
 the sidebar shows cumulative spend in real time.
+
+**Lazy enrichment.** A brand scraper runs once nationally per ~90 days
+and writes all stores to the DB. Google Places then enriches *only*
+stores in cities the analyst has queried - rating/phone/review_count
+get stamped with `enriched_at`. Stores in un-queried cities stay in the
+DB waiting. Cost scales linearly with actual analyst usage rather than
+with national store counts.
+
+**Query guardrail.** Queries whose projected enrichment exceeds
+`MAX_ENRICHMENT_CALLS_PER_QUERY` (100) are blocked with a city-level
+suggestion. This prevents accidental "all India" scans and keeps each
+query inside the Places free tier.
+
+### Playwright setup
+
+Playwright is optional. Without it, JS-rendered brands fall through to
+Google Places. To enable:
+
+```bash
+pip install 'location-intel[playwright]'
+playwright install chromium          # ~500 MB browser binary
+```
+
+Once installed, `extraction_method: "playwright"` entries in the brand
+registry (Starbucks, KFC, Pizza Hut) run headless Chromium to render
+their store locators and parse the DOM. See `BRAND_SCRAPER_STATUS.md` for
+the per-brand status and selector-verification checklist.
+
+To hunt for hidden JSON endpoints behind a JS locator and skip the
+browser entirely, run `python scripts/discover_apis.py`.
 
 ---
 
@@ -183,8 +216,14 @@ python -m src.tools.export_data --format csv --output /tmp/stores.csv
   uses Google Places + OSM; the reconciler produces good output but
   addresses are less clean than a first-party source. See
   [BRAND_SCRAPER_STATUS.md](BRAND_SCRAPER_STATUS.md) for per-brand status.
-- **JS-rendered brand sites not scraped.** Starbucks / KFC / Pizza Hut
-  require a browser renderer; Playwright integration is on the v3 list.
+- **Playwright adds ~500 MB to the install footprint.** The `[playwright]`
+  extra and `playwright install chromium` pull in a headless browser.
+  Without it, JS-rendered brands fall through to Google Places.
+- **Selectors for JS-rendered brands are best-guess** until manually
+  verified against the live site. Run `scripts/discover_apis.py` to find
+  hidden JSON endpoints or inspect the rendered DOM to update selectors.
+- **No "all India" scans.** Queries projected to exceed 100 Google Places
+  enrichment calls are blocked with a city-level suggestion.
 - **Serper pagination caps at ~60 stores/city.** Google Places does as
   well per search but can be refined by neighbourhood.
 - **Sentiment is rating-based only.** Actual review text isn't pulled from

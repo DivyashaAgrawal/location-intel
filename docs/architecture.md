@@ -16,19 +16,22 @@ tables and memo points.
 ```mermaid
 flowchart LR
     U[User query] --> N[NLU - Ollama + fallback]
-    N --> CM[Cache Manager - smart_fetch]
-    CM -->|Layer 1| R[(Redis)]
-    CM -->|Layer 2| DB[(SQLite DB)]
-    CM -->|Layer 3| MF[Multi-Fetcher]
-    MF --> BW[Brand website scrapers]
-    MF --> GP[Google Places API]
-    MF --> SP[Serper.dev fallback]
-    MF --> OSM[OpenStreetMap]
-    BW & GP & SP & OSM --> REC[Reconciler]
+    N --> BSE{Brand size<br/>estimate}
+    BSE -->|projected > 100 calls| BLOCK[Blocked:<br/>suggest city query]
+    BSE -->|within threshold| CM[Cache Manager]
+    CM -->|1| R[(Redis)]
+    CM -->|2| DB[(SQLite)]
+    CM -->|3a| BS[Brand scraper + Playwright]
+    CM -->|3b| GP[Google Places enrichment]
+    CM -->|fallback| SP[Serper.dev]
+    CM -->|fallback| OSM[OpenStreetMap]
+    BS --> REC[Reconciler]
+    GP --> REC
+    SP & OSM --> REC
     REC --> COMP[Competitor analysis]
-    REC --> EXP[Expansion analysis]
-    REC --> AGG[Aggregator]
-    COMP & EXP & AGG --> UI[Streamlit UI]
+    COMP -->|new brands found| DISC[(discovered_competitors)]
+    REC --> EXP[Expansion]
+    COMP & REC & EXP --> UI[Streamlit UI]
 ```
 
 Key rules baked into the flow:
@@ -36,12 +39,55 @@ Key rules baked into the flow:
 - **DB is primary; APIs are last resort.** A repeat query within the TTL
   never hits a paid API. The cost telemetry in `api_call_log` makes this
   easy to verify.
-- **Google Places is the primary maps source; Serper is a fallback.** Per
-  city, Serper only fires if Places came back empty. This is enforced in
-  `multi_fetcher.fetch_multi_source`.
-- **Brand websites run first when available.** They're free and have the
-  cleanest addresses, so first-party data sets the baseline and `google_places`
-  / `serper` add ratings and review counts on top.
+- **Source priority: brand scraper -> Google Places -> Serper -> OSM.**
+  Brand websites are first; Google Places is the enrichment + fallback
+  layer; Serper and OSM are emergency fallbacks only.
+- **Lazy enrichment.** Brand scrapers run once nationally. Google Places
+  then enriches *only* stores in the cities the analyst is currently
+  querying. Stores in other cities stay in the DB un-enriched until a
+  later query asks for them.
+- **No silent large queries.** Before any fetch runs, the pipeline
+  projects the enrichment cost using the brand-size estimate from
+  `brand_metadata`. Anything above `MAX_ENRICHMENT_CALLS_PER_QUERY` (100)
+  is blocked with a city-level suggestion instead.
+
+## Lazy enrichment pattern
+
+Concrete example: the first time an analyst queries "Dominos in Delhi":
+
+1. **Brand size check.** `estimate_brand_size("Dominos Pizza")` returns
+   the cached national count (refreshed every 90 days via the headline
+   extractor or a one-time full scrape).
+2. **Guardrail.** Projected enrichment is `total * len(cities)/20 -
+   already_enriched`. If over 100, block.
+3. **Stage 1 (national scrape).** The brand scraper runs once for the
+   whole country. All stores go into the `stores` table with
+   `enriched_at = NULL`. Cached via `brand_metadata.full_scrape_completed_at`
+   so subsequent queries for any city reuse this footprint.
+4. **Stage 2 (per-city enrichment).** Google Places runs only for Delhi.
+   Those stores get `enriched_at = now()` and carry rating / phone /
+   reviews.
+5. **Result.** The Delhi rows are returned enriched; Mumbai / Bangalore
+   rows stay in the DB waiting for their city to be queried.
+
+Second query ("Dominos in Mumbai") skips stage 1 entirely and only
+enriches Mumbai stores. Total cost: one Playwright run per brand per 90
+days plus a small handful of Places calls per new city.
+
+## Growing competitor registry
+
+`discovered_competitors` is a persistent table that grows from usage.
+When a category query ("all pizza in Delhi") returns a brand not in the
+hand-curated `BRAND_CATEGORY` map, it's inserted with a category tag,
+`first_seen`, and `last_seen`. Repeat appearances bump `times_seen`.
+
+`get_competitors("Dominos Pizza")` then merges:
+- the hand-curated `COMPETITOR_MAP` list
+- every `discovered_competitors` row tagged with the same category
+
+Brands with `times_seen < 3` and no `manually_verified` flag are returned
+but flagged `tentative`. Analysts curate via the sidebar (Confirm / Flag
+as noise) or the `scripts/review_competitors.py` CLI.
 
 ## 2. Persistent DB schema
 
