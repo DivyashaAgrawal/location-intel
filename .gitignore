@@ -1,0 +1,34 @@
+# Environment
+.env
+# NOTE: .env.example IS committed -- do not add it here
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Caches / coverage
+location_intel.db
+src/location_intel.db
+.coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+
+# Data + logs directories (Dockerfile mounts these)
+data/
+logs/
+
+# OS / editor junk
+.DS_Store
+*.swp
+*.swo
+*~
+.claude/
+.vscode/
