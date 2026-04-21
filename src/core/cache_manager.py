@@ -241,6 +241,193 @@ def _default_mock(brand: str, city: str) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Two-stage national scrape + per-city enrichment (Phase 2)
+# ---------------------------------------------------------------------------
+
+def smart_fetch_with_enrichment(
+    brand: str,
+    cities: list[str],
+    query_type: str = "brand",
+) -> Tuple[pd.DataFrame, dict]:
+    """
+    Two-stage fetch: authoritative national footprint, then lazy per-city
+    enrichment.
+
+    Stage 1: if the brand is in the scraper registry, run the Playwright/HTTP
+    scrape once (nationally), writing raw stores to the DB. Cached in
+    `brand_metadata.full_scrape_completed_at` so repeat queries skip it.
+
+    Stage 2: for stores in `cities` that lack a fresh enrichment stamp,
+    call Google Places to add rating/phone/review_count. Stores in other
+    cities stay un-enriched until a later query asks for them.
+
+    Returns `(enriched_df_for_queried_cities, metadata_dict)`.
+    """
+    if query_type != "brand":
+        # Category queries still use the simple per-city path.
+        frames = []
+        sources: dict[str, str] = {}
+        for city in cities:
+            df, src = smart_fetch(brand, city)
+            sources[city] = src
+            if df is not None and not df.empty:
+                frames.append(df)
+        merged = pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
+        return merged, {
+            "query_type": query_type,
+            "queried_cities": cities,
+            "per_city_sources": sources,
+        }
+
+    metadata: dict = {
+        "queried_cities": cities,
+        "stores_enriched_this_call": 0,
+        "stores_from_cache": 0,
+        "total_stores_in_db": 0,
+        "stage1_ran": False,
+        "stage1_records": 0,
+        "stage2_errors": [],
+    }
+
+    _stage1_national_scrape(brand, metadata)
+
+    _stage2_enrich_cities(brand, cities, metadata)
+
+    from src.core import db as _db
+    metadata["total_stores_in_db"] = _db.count_enriched_stores_for_brand(brand)
+
+    df = _fetch_brand_city_rows(brand, cities)
+    return df, metadata
+
+
+def _stage1_national_scrape(brand: str, metadata: dict) -> None:
+    """Run the registry-driven scrape once and persist results.
+
+    Skipped if a recent full_scrape_completed_at exists in brand_metadata.
+    """
+    from src.core import db as _db
+
+    meta = _db.get_brand_metadata(brand)
+    ts = meta.get("full_scrape_completed_at") if meta else None
+    if ts and (_time_now() - float(ts)) < BRAND_METADATA_TTL_SEC:
+        logger.info("[enrichment] stage1 skipped for %s (cached national scrape)", brand)
+        return
+
+    from src.fetchers import brand_scraper
+    info = brand_scraper.get_brand_info(brand)
+    if not info:
+        logger.info("[enrichment] stage1 skipped: %s not in scraper registry", brand)
+        return
+    if info.get("extraction_method") == "blocked":
+        logger.info("[enrichment] stage1 skipped: %s is marked blocked", brand)
+        return
+
+    try:
+        df = brand_scraper.scrape_brand_stores(brand, cities=[])
+    except Exception as e:
+        logger.warning("[enrichment] stage1 scrape failed for %s: %s", brand, e)
+        return
+
+    metadata["stage1_ran"] = True
+    if df is None or df.empty:
+        metadata["stage1_records"] = 0
+        return
+
+    count = 0
+    for rec in df.to_dict(orient="records"):
+        rec.setdefault("brand", brand)
+        rec.setdefault("source", "brand_website")
+        _db.upsert_store(rec)
+        count += 1
+
+    metadata["stage1_records"] = count
+    _db.upsert_brand_metadata(
+        brand=brand,
+        total_stores_estimate=count,
+        source="full_scrape",
+        confidence=1.0,
+        full_scrape_completed_at=_time_now(),
+    )
+
+
+def _stage2_enrich_cities(brand: str, cities: list[str], metadata: dict) -> None:
+    """Google Places enrichment for stores in `cities` that aren't fresh."""
+    if not cities:
+        return
+
+    from src.core import db as _db
+    from src.fetchers import google_places
+
+    if not config.GOOGLE_PLACES_API_KEY:
+        logger.info("[enrichment] stage2 skipped: GOOGLE_PLACES_API_KEY not set")
+        return
+
+    stale = _db.get_unenriched_store_ids(brand, cities)
+    if not stale:
+        return
+
+    enriched_count = 0
+    cached_count = 0
+
+    for city in cities:
+        try:
+            records = google_places.search_text(brand, city)
+        except Exception as e:
+            logger.warning("[enrichment] stage2 Places error in %s: %s", city, e)
+            metadata["stage2_errors"].append({"city": city, "error": str(e)})
+            continue
+
+        for rec in records:
+            rec.setdefault("brand", brand)
+            rec.setdefault("city", city)
+            sid = _db.upsert_store(rec)
+            _db.mark_store_enriched(sid, source="google_places")
+            enriched_count += 1
+        _db.add_known_city_for_brand(brand, city)
+
+    metadata["stores_enriched_this_call"] = enriched_count
+    metadata["stores_from_cache"] = max(0, len(stale) - enriched_count)
+    cached_count += metadata["stores_from_cache"]
+
+
+def _fetch_brand_city_rows(brand: str, cities: list[str]) -> pd.DataFrame:
+    """Pull stores from the DB for `brand` in `cities`, joined to latest rating."""
+    from src.core import db as _db
+
+    if not cities:
+        return pd.DataFrame()
+
+    conn = _db._get_conn()
+    try:
+        placeholders = ",".join("?" * len(cities))
+        rows = conn.execute(
+            f"""
+            SELECT s.*,
+                   r.rating        AS rating,
+                   r.review_count  AS review_count,
+                   r.fetched_at    AS rating_fetched_at
+            FROM stores s
+            LEFT JOIN (
+                SELECT store_id, rating, review_count, fetched_at
+                FROM store_ratings
+                WHERE id IN (SELECT MAX(id) FROM store_ratings GROUP BY store_id)
+            ) r ON r.store_id = s.store_id
+            WHERE s.brand = ? AND s.city IN ({placeholders})
+            """,
+            [brand] + list(cities),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    return pd.DataFrame([dict(r) for r in rows])
+
+
+def _time_now() -> float:
+    import time as _time
+    return _time.time()
+
+
+# ---------------------------------------------------------------------------
 # Brand size estimation (Phase 1.5)
 # ---------------------------------------------------------------------------
 

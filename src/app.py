@@ -103,6 +103,39 @@ def render() -> None:
         with st.expander("Data Quality & Sources", expanded=False):
             st.json(result.get("reconciliation_report", {}))
 
+        enrich_meta = result.get("enrichment_metadata") or {}
+        if enrich_meta:
+            with st.expander("Data sources for this query", expanded=False):
+                stats = cache_manager.cache_stats()
+                cost_total = stats.get("api_cost", {}).get("total_usd", 0.0)
+                for brand, meta in enrich_meta.items():
+                    lines = [f"**{brand}**"]
+                    if meta.get("stage1_ran"):
+                        lines.append(
+                            f"- Brand website scrape: {meta.get('stage1_records', 0)} "
+                            "stores nationally (fresh)"
+                        )
+                    else:
+                        lines.append(
+                            "- Brand website scrape: cached national footprint"
+                        )
+                    enriched = meta.get("stores_enriched_this_call", 0)
+                    if enriched:
+                        lines.append(
+                            f"- Google Places enrichment: {enriched} store(s) "
+                            f"in {', '.join(meta.get('queried_cities', []))} (just refreshed)"
+                        )
+                    from_cache = meta.get("stores_from_cache", 0)
+                    if from_cache:
+                        lines.append(
+                            f"- DB hit: {from_cache} store(s) already enriched"
+                        )
+                    errs = meta.get("stage2_errors") or []
+                    if errs:
+                        lines.append(f"- Enrichment errors: {len(errs)}")
+                    st.markdown("\n".join(lines))
+                st.caption(f"Cumulative API cost across all queries: ${cost_total:.4f} USD")
+
         with st.expander("Fetch source per (brand, city)", expanded=False):
             fs = result.get("fetch_sources", {})
             if fs:

@@ -4,7 +4,11 @@ import logging
 
 import pandas as pd
 from src.nlu import parse_query
-from src.core.cache_manager import estimate_brand_size, smart_fetch
+from src.core.cache_manager import (
+    estimate_brand_size,
+    smart_fetch,
+    smart_fetch_with_enrichment,
+)
 from src.analysis.reconciler import reconcile, reconciliation_report
 from src.analysis.competitor import run_competitor_analysis
 from src.analysis.pincode_mapper import enrich_with_pincodes
@@ -64,11 +68,13 @@ def run_pipeline(
         "competitor_analysis": None,
         "fetch_sources": {},
         "brand_sizes": {},
+        "enrichment_metadata": {},
     }
 
     if query_type == "brand" and not brands:
         return empty_result
 
+    enrichment_metadata_by_brand: dict[str, dict] = {}
     brand_sizes: dict[str, dict] = {}
     if query_type == "brand":
         for brand in brands:
@@ -119,23 +125,46 @@ def run_pipeline(
         )
 
     else:
-        logger.info("[2/8] Brand fetch via smart_fetch...")
+        logger.info("[2/8] Brand fetch via smart_fetch_with_enrichment...")
+        enrichment_metadata_by_brand: dict[str, dict] = {}
         for brand in brands:
-            frames = []
-            for city in cities:
-                df, source = smart_fetch(brand, city)
-                fetch_sources[(brand, city)] = source
-                if df is not None and not df.empty:
-                    frames.append(df)
-            brand_df = pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
+            try:
+                brand_df, fetch_meta = smart_fetch_with_enrichment(brand, cities)
+            except Exception as e:
+                logger.warning(f"smart_fetch_with_enrichment failed for {brand}: {e}")
+                brand_df, fetch_meta = pd.DataFrame(), {"error": str(e)}
+
+            # Fallback: if the two-stage path yielded nothing (e.g. brand not in
+            # scraper registry and no Places key), fall back to per-city
+            # smart_fetch so emergency sources (Serper/OSM/mock) still run.
+            if brand_df is None or brand_df.empty:
+                frames = []
+                for city in cities:
+                    df, source = smart_fetch(brand, city)
+                    fetch_sources[(brand, city)] = source
+                    if df is not None and not df.empty:
+                        frames.append(df)
+                brand_df = (
+                    pd.concat(frames, ignore_index=True, sort=False)
+                    if frames else pd.DataFrame()
+                )
+            else:
+                for city in cities:
+                    fetch_sources[(brand, city)] = (
+                        "enrichment" if fetch_meta.get("stores_enriched_this_call") else "db"
+                    )
+
             if not brand_df.empty:
                 brand_df["brand"] = brand
+
+            enrichment_metadata_by_brand[brand] = fetch_meta
             raw_records_by_brand[brand] = brand_df
             combined_raw_list.append(brand_df)
-            sources_summary = ", ".join(
-                f"{c}={fetch_sources.get((brand, c), '?')}" for c in cities
+            logger.info(
+                f"{brand}: {len(brand_df)} records "
+                f"(stage1_records={fetch_meta.get('stage1_records', 0)}, "
+                f"enriched={fetch_meta.get('stores_enriched_this_call', 0)})"
             )
-            logger.info(f"{brand}: {len(brand_df)} records [{sources_summary}]")
 
     combined_raw = (
         pd.concat([df for df in combined_raw_list if df is not None and not df.empty],
@@ -246,4 +275,5 @@ def run_pipeline(
         "competitor_analysis": competitor_analysis,
         "fetch_sources": {f"{b}|{c}": s for (b, c), s in fetch_sources.items()},
         "brand_sizes": brand_sizes,
+        "enrichment_metadata": enrichment_metadata_by_brand,
     }

@@ -45,10 +45,12 @@ CREATE TABLE IF NOT EXISTS stores (
     phone           TEXT,
     website         TEXT,
     category        TEXT,
-    sources         TEXT,
-    source_count    INTEGER,
-    data_quality    REAL,
-    last_updated    REAL NOT NULL
+    sources             TEXT,
+    source_count        INTEGER,
+    data_quality        REAL,
+    last_updated        REAL NOT NULL,
+    enriched_at         REAL,               -- NULL if never enriched
+    enrichment_source   TEXT                -- e.g. 'google_places', 'serper'
 );
 
 CREATE INDEX IF NOT EXISTS ix_stores_brand_city ON stores(brand, city);
@@ -116,7 +118,18 @@ def _get_conn(db_path: Optional[str] = None) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
+    _apply_migrations(conn)
     return conn
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    """Additive, idempotent column migrations for existing DB files."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(stores)").fetchall()}
+    if "enriched_at" not in existing:
+        conn.execute("ALTER TABLE stores ADD COLUMN enriched_at REAL")
+    if "enrichment_source" not in existing:
+        conn.execute("ALTER TABLE stores ADD COLUMN enrichment_source TEXT")
+    conn.commit()
 
 
 def init_db(db_path: Optional[str] = None) -> None:
@@ -165,7 +178,10 @@ _STORE_COLS = [
     "store_id", "place_id", "brand", "title", "address", "city", "state",
     "pincode", "latitude", "longitude", "phone", "website", "category",
     "sources", "source_count", "data_quality",
+    "enriched_at", "enrichment_source",
 ]
+
+ENRICHMENT_TTL_SEC = 7 * 24 * 3600  # 7 days: RATING_TTL
 
 
 def upsert_store(record: dict, db_path: Optional[str] = None) -> str:
@@ -557,6 +573,56 @@ def add_known_city_for_brand(
             known_cities=sorted(known),
             db_path=db_path,
         )
+
+
+def mark_store_enriched(
+    store_id: str,
+    source: str = "google_places",
+    db_path: Optional[str] = None,
+) -> None:
+    """Stamp a store as enriched by `source` as of now."""
+    conn = _get_conn(db_path)
+    try:
+        conn.execute(
+            "UPDATE stores SET enriched_at = ?, enrichment_source = ? WHERE store_id = ?",
+            (time.time(), source, store_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_unenriched_store_ids(
+    brand: str,
+    cities: list[str],
+    ttl_sec: int = ENRICHMENT_TTL_SEC,
+    db_path: Optional[str] = None,
+) -> list[dict]:
+    """
+    Return stores for `brand` in `cities` that lack a fresh enrichment stamp.
+
+    Stale = `enriched_at IS NULL` or older than `ttl_sec`. Each row carries
+    enough context to run an enrichment call (title + address + city).
+    """
+    if not cities:
+        return []
+    cutoff = time.time() - ttl_sec
+    conn = _get_conn(db_path)
+    try:
+        placeholders = ",".join("?" * len(cities))
+        rows = conn.execute(
+            f"""
+            SELECT store_id, brand, title, address, city, latitude, longitude
+            FROM stores
+            WHERE brand = ?
+              AND city IN ({placeholders})
+              AND (enriched_at IS NULL OR enriched_at < ?)
+            """,
+            [brand] + list(cities) + [cutoff],
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
 
 
 def count_enriched_stores_for_brand(
