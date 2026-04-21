@@ -112,6 +112,33 @@ def render() -> None:
                 )
 
         st.divider()
+        with st.expander("Discovered competitors", expanded=False):
+            from src.core import db as _db
+            rows = _db.list_all_discovered_competitors()
+            if not rows:
+                st.caption(
+                    "None yet. Category queries like 'all pizza stores in Delhi' "
+                    "will populate this list over time."
+                )
+            else:
+                for row in rows[:20]:
+                    brand = row["brand"]
+                    verified = bool(row.get("manually_verified"))
+                    label = (
+                        f"**{brand}** ({row['category']}, seen {row['times_seen']}x)"
+                        f"{' verified' if verified else ''}"
+                    )
+                    st.markdown(label)
+                    c_ok, c_no = st.columns(2)
+                    if not verified:
+                        if c_ok.button("Confirm", key=f"verify-{brand}"):
+                            _db.verify_discovered_competitor(brand)
+                            st.rerun()
+                    if c_no.button("Flag as noise", key=f"delete-{brand}"):
+                        _db.delete_discovered_competitor(brand)
+                        st.rerun()
+
+        st.divider()
         st.subheader("Example queries")
         examples = [
             "pincode wise Dominos stores in Delhi and Mumbai with ratings",

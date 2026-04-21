@@ -57,25 +57,107 @@ def _norm_brand(s: str) -> str:
     return (s or "").strip().lower().replace("'", "").replace("'", "")
 
 
+# Reverse lookup: brand -> category, for merging with discovered_competitors.
+# Conservative mapping; only entries where the category is unambiguous.
+BRAND_CATEGORY: dict[str, str] = {
+    "Dominos Pizza":   "pizza",
+    "Pizza Hut":       "pizza",
+    "La Pino'z":       "pizza",
+    "Mojo Pizza":      "pizza",
+    "Papa John's":     "pizza",
+    "Oven Story":      "pizza",
+    "McDonald's":      "burger",
+    "Burger King":     "burger",
+    "KFC":             "fried_chicken",
+    "Subway":          "sandwich",
+    "Starbucks":       "coffee",
+    "Cafe Coffee Day": "coffee",
+    "Barista":         "coffee",
+    "Blue Tokai":      "coffee",
+    "Third Wave Coffee": "coffee",
+    "Chaayos":         "tea",
+    "Chai Point":      "tea",
+    "Haldiram's":      "indian_qsr",
+    "Bikanervala":     "indian_qsr",
+    "Wow! Momo":       "indian_qsr",
+    "Da Milano":       "leather",
+    "Tanishq":         "jewellery",
+    "Malabar Gold":    "jewellery",
+    "Kalyan Jewellers": "jewellery",
+    "CaratLane":       "jewellery",
+    "Lenskart":        "eyewear",
+    "Titan Eye Plus":  "eyewear",
+    "FabIndia":        "apparel",
+    "Zara":            "apparel",
+    "H&M":             "apparel",
+    "Westside":        "apparel",
+    "Pantaloons":      "apparel",
+    "Max Fashion":     "apparel",
+    "Bata":            "footwear",
+    "Metro Shoes":     "footwear",
+    "Liberty":         "footwear",
+    "Relaxo":          "footwear",
+    "Woodland":        "footwear",
+    "Nykaa":           "beauty",
+}
+
+
 def get_competitors(brand: str, max_n: int = 3) -> list[str]:
     """
-    Direct competitors for `brand`. Matching is case-insensitive and tolerant
-    of minor variations ("Dominos" vs "Domino's", trailing "Pizza", etc.).
-    Returns up to `max_n` names.
+    Direct competitors for `brand`. Returns the hand-curated list merged
+    with anything in `discovered_competitors` for the same category.
+    Matching is case-insensitive and tolerant of minor variations.
     """
     if not brand:
         return []
+
     key = _norm_brand(brand)
-    # Direct match first.
+    static: list[str] = []
     for b, comps in COMPETITOR_MAP.items():
         if _norm_brand(b) == key:
-            return comps[:max_n]
-    # Loose contains-match, ignoring apostrophes.
-    for b, comps in COMPETITOR_MAP.items():
+            static = list(comps)
+            break
+    if not static:
+        for b, comps in COMPETITOR_MAP.items():
+            lk = _norm_brand(b)
+            if key in lk or lk in key:
+                static = list(comps)
+                break
+
+    category = _lookup_category(brand)
+    discovered: list[str] = []
+    if category:
+        try:
+            from src.core import db as _db
+            rows = _db.get_discovered_competitors(category)
+        except Exception:
+            rows = []
+        for row in rows:
+            name = row.get("brand")
+            if name and _norm_brand(name) != key:
+                discovered.append(name)
+
+    seen: set[str] = set()
+    merged: list[str] = []
+    for name in static + discovered:
+        nk = _norm_brand(name)
+        if nk and nk not in seen:
+            seen.add(nk)
+            merged.append(name)
+
+    return merged[:max_n]
+
+
+def _lookup_category(brand: str) -> str | None:
+    key = _norm_brand(brand)
+    for b, cat in BRAND_CATEGORY.items():
+        if _norm_brand(b) == key:
+            return cat
+    for b, cat in BRAND_CATEGORY.items():
         lk = _norm_brand(b)
         if key in lk or lk in key:
-            return comps[:max_n]
-    return []
+            return cat
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +332,20 @@ def run_competitor_analysis(
     """
     competitors = get_competitors(focal_brand, max_n=max_competitors)
 
+    category = _lookup_category(focal_brand)
+    tentative_flags: dict[str, bool] = {}
+    if category:
+        try:
+            from src.core import db as _db
+            rows = _db.get_discovered_competitors(category)
+        except Exception:
+            rows = []
+        for row in rows:
+            times_seen = int(row.get("times_seen") or 0)
+            verified = int(row.get("manually_verified") or 0)
+            if times_seen < 3 and not verified:
+                tentative_flags[row["brand"]] = True
+
     competitor_frames: dict[str, pd.DataFrame] = {}
     for comp in competitors:
         frames = []
@@ -287,4 +383,5 @@ def run_competitor_analysis(
         "share_of_voice": sov_df,
         "territory_by_pincode": territory_df,
         "memo_points": memo,
+        "tentative_competitors": [c for c in competitors if tentative_flags.get(c)],
     }

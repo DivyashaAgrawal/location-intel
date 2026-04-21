@@ -100,6 +100,18 @@ CREATE TABLE IF NOT EXISTS brand_metadata (
 
 CREATE INDEX IF NOT EXISTS idx_brand_metadata_refreshed ON brand_metadata(last_refreshed DESC);
 
+CREATE TABLE IF NOT EXISTS discovered_competitors (
+    brand                TEXT PRIMARY KEY,
+    category             TEXT NOT NULL,
+    first_seen           REAL NOT NULL,
+    last_seen            REAL NOT NULL,
+    times_seen           INTEGER NOT NULL DEFAULT 1,
+    source               TEXT NOT NULL,
+    manually_verified    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_discovered_category ON discovered_competitors(category, last_seen DESC);
+
 CREATE TABLE IF NOT EXISTS api_call_log (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
     source                  TEXT NOT NULL,
@@ -648,6 +660,98 @@ def count_enriched_stores_for_brand(
     finally:
         conn.close()
     return int(row["n"]) if row else 0
+
+
+# ---------------------------------------------------------------------------
+# Discovered competitors (Phase 3)
+# ---------------------------------------------------------------------------
+
+def record_discovered_competitor(
+    brand: str,
+    category: str,
+    source: str = "category_query",
+    db_path: Optional[str] = None,
+) -> None:
+    """Idempotent upsert: first-seen stamps now; subsequent calls bump last_seen + times_seen."""
+    brand = (brand or "").strip()
+    category = (category or "").strip()
+    if not brand or not category:
+        return
+    now = time.time()
+    conn = _get_conn(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO discovered_competitors
+              (brand, category, first_seen, last_seen, times_seen, source)
+            VALUES (?, ?, ?, ?, 1, ?)
+            ON CONFLICT(brand) DO UPDATE SET
+              last_seen = excluded.last_seen,
+              times_seen = discovered_competitors.times_seen + 1
+            """,
+            (brand, category, now, now, source),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_discovered_competitors(
+    category: str, db_path: Optional[str] = None
+) -> list[dict[str, Any]]:
+    """Return all rows for `category`, ordered by manually_verified DESC, times_seen DESC."""
+    conn = _get_conn(db_path)
+    try:
+        rows = conn.execute(
+            """
+            SELECT brand, category, first_seen, last_seen, times_seen,
+                   source, manually_verified
+            FROM discovered_competitors
+            WHERE LOWER(category) = LOWER(?)
+            ORDER BY manually_verified DESC, times_seen DESC, last_seen DESC
+            """,
+            (category,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+def verify_discovered_competitor(brand: str, db_path: Optional[str] = None) -> None:
+    conn = _get_conn(db_path)
+    try:
+        conn.execute(
+            "UPDATE discovered_competitors SET manually_verified = 1 WHERE brand = ?",
+            (brand,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_discovered_competitor(brand: str, db_path: Optional[str] = None) -> None:
+    conn = _get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM discovered_competitors WHERE brand = ?", (brand,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def list_all_discovered_competitors(db_path: Optional[str] = None) -> list[dict[str, Any]]:
+    conn = _get_conn(db_path)
+    try:
+        rows = conn.execute(
+            """
+            SELECT brand, category, first_seen, last_seen, times_seen,
+                   source, manually_verified
+            FROM discovered_competitors
+            ORDER BY times_seen DESC, last_seen DESC
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
 
 
 def db_stats(db_path: Optional[str] = None) -> dict[str, Any]:

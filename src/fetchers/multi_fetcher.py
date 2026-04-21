@@ -97,11 +97,38 @@ def _fetch_brand_website(query: str, city: str) -> list[dict]:
 # Orchestrator
 # ---------------------------------------------------------------------------
 
+def _record_discovered_brands_for_category(records: list[dict], category: str) -> None:
+    """For category queries, persist any novel brand names to `discovered_competitors`."""
+    if not records or not category:
+        return
+    try:
+        from src.analysis.competitor import BRAND_CATEGORY
+        from src.core import db as _db
+    except Exception:
+        return
+
+    known = {b.lower() for b in BRAND_CATEGORY}
+    seen_this_call: set[str] = set()
+    for rec in records:
+        name = (rec.get("brand") or rec.get("title") or "").strip()
+        if not name:
+            continue
+        lower = name.lower()
+        if lower in known or lower in seen_this_call:
+            continue
+        seen_this_call.add(lower)
+        try:
+            _db.record_discovered_competitor(name, category=category, source=rec.get("source") or "category_query")
+        except Exception:
+            pass
+
+
 def fetch_multi_source(
     query: str,
     cities: list[str],
     sources: list[str] | None = None,
     delay: float = 1.0,
+    category: str | None = None,
 ) -> pd.DataFrame:
     """
     Run the requested adapters against each city and return a combined
@@ -167,6 +194,8 @@ def fetch_multi_source(
                     cache_manager.set_cached(
                         query, city, pd.DataFrame(records), source=source_name
                     )
+                    if category:
+                        _record_discovered_brands_for_category(records, category)
             except Exception as e:
                 logger.warning(f"[{source_name}] Error for '{query}' in {city}: {e}")
 
