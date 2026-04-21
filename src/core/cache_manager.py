@@ -427,6 +427,58 @@ def _time_now() -> float:
     return _time.time()
 
 
+def estimate_enrichment_needed(brand: str, cities: list[str]) -> int:
+    """
+    Project how many Google Places enrichment calls running the query now
+    would cost. Subtracts stores already freshly enriched in the DB.
+
+    Assumptions:
+      - With no `cities` filter (or "all India"), the projection is the
+        brand's full store count.
+      - With a city filter, we approximate per-city share as
+        min(len(cities)/20, 1.0) of the national count (tier-1 cities
+        hold roughly 5-10% of a national footprint).
+      - Stores already enriched and still fresh (inside ENRICHMENT_TTL_SEC)
+        don't count as projected calls.
+    """
+    from src.core import db as _db
+
+    size = estimate_brand_size(brand)
+    total = size.get("total_stores_estimate") or 0
+
+    is_all_india = (not cities) or any(
+        c.strip().lower() in {"all india", "india"} for c in cities
+    )
+    if is_all_india:
+        projected = total
+    else:
+        share = min(len(cities) / 20.0, 1.0) if cities else 1.0
+        projected = int(round(total * share))
+
+    already = _db.count_enriched_stores_for_brand(brand, cities or None)
+    return max(0, int(projected) - int(already))
+
+
+def get_already_enriched_cities(brand: str) -> list[dict]:
+    """Return [{city, store_count}] for cities with any enriched stores."""
+    from src.core import db as _db
+
+    conn = _db._get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT city, COUNT(*) AS n FROM stores
+            WHERE brand = ? AND enriched_at IS NOT NULL AND city IS NOT NULL
+            GROUP BY city
+            ORDER BY n DESC
+            """,
+            (brand,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [{"city": r["city"], "store_count": int(r["n"])} for r in rows]
+
+
 # ---------------------------------------------------------------------------
 # Brand size estimation (Phase 1.5)
 # ---------------------------------------------------------------------------

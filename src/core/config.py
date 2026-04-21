@@ -38,3 +38,15 @@ INDIA_MAJOR_CITIES = {
 }
 
 NOMINATIM_USER_AGENT = "location-intel-prototype/1.0"
+
+# Hard guardrail. Queries projected to exceed this many Google Places
+# enrichment calls are blocked with a "please narrow scope" message.
+# 100 keeps us well inside the 1K free Enterprise tier and completes in
+# under ~90s, and forces focused city-level analysis (the IC-prep workflow
+# we actually optimise for).
+MAX_ENRICHMENT_CALLS_PER_QUERY = 100
+
+TIER_1_CITIES: list[str] = [
+    "Mumbai", "Delhi", "Bangalore", "Chennai",
+    "Hyderabad", "Pune", "Kolkata",
+]

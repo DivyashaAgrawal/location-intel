@@ -7,6 +7,52 @@ from src.core import cache_manager
 from src.pipeline import run_pipeline
 
 
+def _render_blocked(result: dict) -> None:
+    scope = result.get("scope") or {}
+    brand = scope.get("brand") or "Brand"
+    total = scope.get("total_brand_size")
+    projected = scope.get("projected_api_calls") or 0
+
+    st.warning(result.get("message") or "This query is too large.")
+
+    lines = []
+    if total:
+        lines.append(
+            f"**{brand}** has ~{total:,} stores across India. Running this "
+            f"in one pass would make ~{projected} enrichment call(s)."
+        )
+    else:
+        lines.append(
+            f"Running **{brand}** across the requested scope would make "
+            f"~{projected} enrichment call(s) - above the threshold."
+        )
+    st.markdown("\n".join(lines))
+
+    already = scope.get("already_enriched_cities") or []
+    tier1 = scope.get("tier_1_cities_available") or []
+
+    if tier1:
+        st.markdown("**Try instead (tier-1 cities):**")
+        cols = st.columns(len(tier1))
+        for col, city in zip(cols, tier1):
+            q = f"{brand} in {city}"
+            if col.button(q, key=f"blocked-suggest-{brand}-{city}"):
+                st.session_state["query_input"] = q
+                st.rerun()
+
+    if already:
+        st.markdown("**Cities already in our DB:**")
+        cols = st.columns(min(len(already), 4) or 1)
+        for i, row in enumerate(already):
+            col = cols[i % len(cols)]
+            city = row["city"]
+            label = f"{city} ({row['store_count']} stores)"
+            q = f"{brand} in {city}"
+            if col.button(label, key=f"blocked-db-{brand}-{city}"):
+                st.session_state["query_input"] = q
+                st.rerun()
+
+
 def render() -> None:
     stats = cache_manager.cache_stats()
 
@@ -89,6 +135,10 @@ def render() -> None:
     if run_button and query:
         with st.spinner("Running location intelligence pipeline..."):
             result = run_pipeline(query)
+
+        if result.get("status") == "blocked":
+            _render_blocked(result)
+            st.stop()
 
         raw = result["raw_stores"]
 

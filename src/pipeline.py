@@ -6,9 +6,12 @@ import pandas as pd
 from src.nlu import parse_query
 from src.core.cache_manager import (
     estimate_brand_size,
+    estimate_enrichment_needed,
+    get_already_enriched_cities,
     smart_fetch,
     smart_fetch_with_enrichment,
 )
+from src.core.config import MAX_ENRICHMENT_CALLS_PER_QUERY, TIER_1_CITIES
 from src.analysis.reconciler import reconcile, reconciliation_report
 from src.analysis.competitor import run_competitor_analysis
 from src.analysis.pincode_mapper import enrich_with_pincodes
@@ -91,6 +94,57 @@ def run_pipeline(
                 f"(source={size.get('source')}, "
                 f"confidence={size.get('confidence')})"
             )
+
+    if query_type == "brand":
+        over_budget: list[dict] = []
+        for brand in brands:
+            projected = estimate_enrichment_needed(brand, cities)
+            if projected > MAX_ENRICHMENT_CALLS_PER_QUERY:
+                size = brand_sizes.get(brand, {})
+                over_budget.append({
+                    "brand": brand,
+                    "total_brand_size": size.get("total_stores_estimate"),
+                    "cities_requested": cities or ["all India"],
+                    "projected_api_calls": projected,
+                    "threshold": MAX_ENRICHMENT_CALLS_PER_QUERY,
+                    "already_enriched_cities": get_already_enriched_cities(brand),
+                    "tier_1_cities_available": TIER_1_CITIES,
+                    "suggestion": {
+                        "try_instead": (
+                            f"Start with one city, e.g., "
+                            f"'{brand} in {TIER_1_CITIES[0]}'"
+                        ),
+                    },
+                })
+
+        if over_budget:
+            first = over_budget[0]
+            return {
+                "parsed_query": parsed,
+                "status": "blocked",
+                "reason": "query_too_large",
+                "message": (
+                    "This query is too large to run in a single pass. "
+                    "For now, please query city by city. As more queries "
+                    "run, the database will fill up and subsequent queries "
+                    "will be faster and cheaper."
+                ),
+                "scope": first,
+                "scopes": over_budget,
+                "raw_stores": pd.DataFrame(),
+                "summary_table": pd.DataFrame(),
+                "executive_summary": "Query blocked: projected enrichment too large.",
+                "comparison_table": None,
+                "density_tables": {},
+                "whitespace_tables": {},
+                "ic_memo_points": {},
+                "peer_benchmark": None,
+                "reconciliation_report": {"status": "blocked"},
+                "competitor_analysis": None,
+                "fetch_sources": {},
+                "brand_sizes": brand_sizes,
+                "enrichment_metadata": {},
+            }
 
     raw_records_by_brand: dict[str, pd.DataFrame] = {}
     fetch_sources: dict[tuple[str, str], str] = {}
