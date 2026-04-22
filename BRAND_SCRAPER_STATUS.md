@@ -23,7 +23,7 @@ Referer). Timeout 10s.
 |---------------|---------------|----------------------|-------------------------------|---------------|-------|
 | Dominos Pizza | blocked       | 404 (HTTP)           | 0                             | 2026-04-20    | Registered API + HTML paths both 404. Refresh URL before re-enabling. |
 | McDonald's    | blocked       | 404 (HTTP)           | 0                             | 2026-04-20    | `/locate-us` drifted; homepage reachable. |
-| Starbucks     | playwright    | pending live verify  | pending                       | 2026-04-20    | Registry carries best-guess selectors; re-check with `scripts/discover_apis.py`. |
+| Starbucks     | playwright    | pending live verify  | pending                       | 2026-04-20    | Registry carries best-guess selectors; re-check with `src/scripts/discover_apis.py`. |
 | Da Milano     | blocked       | 404 (HTTP)           | 0                             | 2026-04-20    | `/pages/store-locator` returns 404. |
 | Nykaa         | blocked       | 403 (HTTP)           | 0                             | 2026-04-20    | Cloudflare WAF; needs residential proxy. |
 | Tanishq       | blocked       | 404 (HTTP)           | 0                             | 2026-04-20    | API + HTML locator both 404. |
@@ -45,7 +45,7 @@ relying on these brands in production, run:
 
 ```
 playwright install chromium                             # one-time
-python scripts/discover_apis.py                         # find hidden JSON APIs
+python src/scripts/discover_apis.py                     # find hidden JSON APIs
 # If no JSON endpoint is revealed, inspect the live DOM and update the
 # selectors in src/fetchers/brand_scraper.py::BRAND_REGISTRY.
 ```

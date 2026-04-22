@@ -11,7 +11,7 @@ Lists every entry sorted by times_seen DESC and prompts for each:
 Intended for periodic cleanup. Not hooked into any cron.
 
 Usage:
-    python scripts/review_competitors.py
+    python src/scripts/review_competitors.py
 """
 from __future__ import annotations
 

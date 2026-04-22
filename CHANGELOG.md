@@ -23,9 +23,9 @@
   `smart_fetch_with_enrichment(brand, cities)` runs the brand scraper
   once nationally, then enriches only stores in queried cities.
   `enriched_at` / `enrichment_source` columns track freshness per store.
-- **Scripts**: `scripts/discover_apis.py` (hunt JSON endpoints behind
-  JS locators), `scripts/refresh_brand_sizes.py` (monthly cron),
-  `scripts/review_competitors.py` (interactive CLI curation).
+- **Scripts**: `src/scripts/discover_apis.py` (hunt JSON endpoints
+  behind JS locators), `src/scripts/refresh_brand_sizes.py` (monthly
+  cron), `src/scripts/review_competitors.py` (interactive CLI curation).
 - **Test suite.** 35 tests covering Playwright graceful degradation,
   brand size estimation decision tree, query guardrails, lazy
   enrichment flow, and discovered-competitor lifecycle.

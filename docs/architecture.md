@@ -87,7 +87,7 @@ hand-curated `BRAND_CATEGORY` map, it's inserted with a category tag,
 
 Brands with `times_seen < 3` and no `manually_verified` flag are returned
 but flagged `tentative`. Analysts curate via the sidebar (Confirm / Flag
-as noise) or the `scripts/review_competitors.py` CLI.
+as noise) or the `src/scripts/review_competitors.py` CLI.
 
 ## 2. Persistent DB schema
 

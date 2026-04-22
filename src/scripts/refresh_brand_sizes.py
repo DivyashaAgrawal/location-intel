@@ -4,7 +4,7 @@ brand. Intended for a monthly cron. Runs in roughly
 (num_playwright_brands * 3s) + (num_full_scrape_brands * HTTP RTT).
 
 Usage:
-    python scripts/refresh_brand_sizes.py
+    python src/scripts/refresh_brand_sizes.py
 """
 from __future__ import annotations
 

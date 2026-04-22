@@ -11,9 +11,9 @@ registry entry from `extraction_method: "playwright"` to `"api"` (with the
 discovered URL as `api_url`) avoids the browser-launch cost on every query.
 
 Usage:
-    python scripts/discover_apis.py
-    python scripts/discover_apis.py --brand "Starbucks"
-    python scripts/discover_apis.py --out discovery.json
+    python src/scripts/discover_apis.py
+    python src/scripts/discover_apis.py --brand "Starbucks"
+    python src/scripts/discover_apis.py --out discovery.json
 """
 from __future__ import annotations
 

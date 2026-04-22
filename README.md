@@ -119,7 +119,7 @@ their store locators and parse the DOM. See `BRAND_SCRAPER_STATUS.md` for
 the per-brand status and selector-verification checklist.
 
 To hunt for hidden JSON endpoints behind a JS locator and skip the
-browser entirely, run `python scripts/discover_apis.py`.
+browser entirely, run `python src/scripts/discover_apis.py`.
 
 ---
 
@@ -220,7 +220,7 @@ python -m src.tools.export_data --format csv --output /tmp/stores.csv
   extra and `playwright install chromium` pull in a headless browser.
   Without it, JS-rendered brands fall through to Google Places.
 - **Selectors for JS-rendered brands are best-guess** until manually
-  verified against the live site. Run `scripts/discover_apis.py` to find
+  verified against the live site. Run `src/scripts/discover_apis.py` to find
   hidden JSON endpoints or inspect the rendered DOM to update selectors.
 - **No "all India" scans.** Queries projected to exceed 100 Google Places
   enrichment calls are blocked with a city-level suggestion.
