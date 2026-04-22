@@ -15,7 +15,7 @@ setup:  ## One-shot setup: venv, deps, Ollama + model, Redis install + start, .e
 
 env:  ## Open .env in $EDITOR (vi if unset). Seeds from .env.example if missing.
 	@if [ ! -f .env ] && [ -f .env.example ]; then cp .env.example .env; echo "[make] Seeded .env from .env.example"; fi
-	@$${EDITOR:-vi} .env
+	@$${EDITOR:-vi} .env 
 
 install:  ## Install deps into existing venv (runtime + lint tools)
 	$(ACT) && pip install -e '.[dev]'
