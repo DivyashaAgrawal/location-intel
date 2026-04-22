@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 from bs4 import BeautifulSoup
@@ -32,7 +32,7 @@ try:
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
-    sync_playwright = None  # type: ignore[assignment]
+    sync_playwright = None
 
     class PWTimeoutError(Exception):  # type: ignore[no-redef]
         pass
@@ -88,7 +88,7 @@ def scrape_with_playwright(brand: str, cities: list[str]) -> pd.DataFrame:
     return df
 
 
-def get_headline_count(brand: str) -> Optional[int]:
+def get_headline_count(brand: str) -> int | None:
     """Read the brand's total store count from the locator page header.
 
     Uses a short (3 second) timeout. Returns None if Playwright is
@@ -133,11 +133,11 @@ def get_headline_count(brand: str) -> Optional[int]:
 
 def _render_page(
     url: str,
-    wait_selector: Optional[str],
-    load_more_selector: Optional[str],
+    wait_selector: str | None,
+    load_more_selector: str | None,
     max_clicks: int,
     brand: str,
-) -> Optional[str]:
+) -> str | None:
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=True)
@@ -186,7 +186,7 @@ def _exhaust_load_more(page: Any, selector: str, max_clicks: int) -> None:
 def _parse_rendered_html(
     html: str,
     brand: str,
-    item_selector: Optional[str],
+    item_selector: str | None,
     fields: dict,
 ) -> list[dict]:
     if not item_selector:
@@ -215,7 +215,7 @@ def _parse_rendered_html(
     return records
 
 
-def _first_text(scope: Any, selector: str) -> Optional[str]:
+def _first_text(scope: Any, selector: str) -> str | None:
     if not selector:
         return None
     el = scope.select_one(selector)
@@ -242,7 +242,7 @@ def _filter_by_cities(df: pd.DataFrame, cities: list[str]) -> pd.DataFrame:
     return df
 
 
-def _parse_count(text: str, regex: Optional[str]) -> Optional[int]:
+def _parse_count(text: str, regex: str | None) -> int | None:
     if regex:
         m = re.search(regex, text)
         if not m:

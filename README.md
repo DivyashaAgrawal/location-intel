@@ -58,7 +58,7 @@ Core modules:
 | Module | Role |
 |---|---|
 | `src/nlu.py` | NL -> structured query (Ollama + rule-based fallback) |
-| `src/core/cache_manager.py` | `smart_fetch`: Redis -> DB -> API -> mock |
+| `src/core/cache_manager.py` | `smart_fetch`: Redis -> DB -> API |
 | `src/core/db.py` | Persistent stores + query_cache + source_cache + api_call_log |
 | `src/fetchers/multi_fetcher.py` | Orchestrates adapters |
 | `src/fetchers/google_places.py` | Primary maps source (Places v1) |
@@ -187,7 +187,7 @@ make type
 
 ## 8. Deployment guide
 
-Local dev only for now. Runs under `make run` / `streamlit run src/app.py`.
+Local dev only for now. Runs under `make run`.
 SQLite DB lives at `location_intel.db` (override with
 `LOCATION_INTEL_DB_PATH`). Redis is optional (`REDIS_URL` in `.env`) and
 falls back to SQLite automatically.
@@ -237,7 +237,7 @@ python -m src.tools.export_data --format csv --output /tmp/stores.csv
 
 ## 10. Roadmap
 
-**v3 candidates** (not in scope for v2):
+**v2 candidates**:
 
 - Playwright-backed scrapers for JS-rendered brand sites.
 - Outscraper integration to pull full review text; LLM-based theme

@@ -17,10 +17,10 @@ import json
 import os
 import sqlite3
 import time
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from typing import Any
 
 import pandas as pd
-
 
 DEFAULT_DB_PATH = os.environ.get(
     "LOCATION_INTEL_DB_PATH",
@@ -125,7 +125,7 @@ CREATE TABLE IF NOT EXISTS api_call_log (
 CREATE INDEX IF NOT EXISTS ix_api_log_source ON api_call_log(source, called_at);
 """
 
-def _get_conn(db_path: Optional[str] = None) -> sqlite3.Connection:
+def _get_conn(db_path: str | None = None) -> sqlite3.Connection:
     path = db_path or DEFAULT_DB_PATH
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
@@ -144,7 +144,7 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def init_db(db_path: Optional[str] = None) -> None:
+def init_db(db_path: str | None = None) -> None:
     """Create tables and indexes if they don't exist. Safe to call repeatedly."""
     conn = _get_conn(db_path)
     conn.commit()
@@ -156,10 +156,10 @@ def init_db(db_path: Optional[str] = None) -> None:
 # ---------------------------------------------------------------------------
 
 def compute_store_id(
-    place_id: Optional[str] = None,
-    brand: Optional[str] = None,
-    latitude: Optional[float] = None,
-    longitude: Optional[float] = None,
+    place_id: str | None = None,
+    brand: str | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
 ) -> str:
     """
     Deterministic store identifier.
@@ -173,12 +173,12 @@ def compute_store_id(
     brand_key = (brand or "").strip().lower()
     lat_key = f"{float(latitude):.6f}" if latitude is not None else "nan"
     lng_key = f"{float(longitude):.6f}" if longitude is not None else "nan"
-    payload = f"{brand_key}|{lat_key}|{lng_key}".encode("utf-8")
+    payload = f"{brand_key}|{lat_key}|{lng_key}".encode()
     return "h:" + hashlib.sha1(payload).hexdigest()[:16]
 
 
 def _query_hash(brand: str, city: str) -> str:
-    key = f"{brand.strip().lower()}|{city.strip().lower()}".encode("utf-8")
+    key = f"{brand.strip().lower()}|{city.strip().lower()}".encode()
     return hashlib.sha1(key).hexdigest()
 
 
@@ -196,7 +196,7 @@ _STORE_COLS = [
 ENRICHMENT_TTL_SEC = 7 * 24 * 3600  # 7 days: RATING_TTL
 
 
-def upsert_store(record: dict, db_path: Optional[str] = None) -> str:
+def upsert_store(record: dict, db_path: str | None = None) -> str:
     """
     Insert or update a single store row. Returns the store_id used.
 
@@ -242,7 +242,7 @@ def upsert_store(record: dict, db_path: Optional[str] = None) -> str:
         conn.close()
 
 
-def upsert_stores(records: Iterable[dict], db_path: Optional[str] = None) -> list[str]:
+def upsert_stores(records: Iterable[dict], db_path: str | None = None) -> list[str]:
     """Bulk upsert. Returns the list of store_ids written, preserving input order."""
     ids = []
     for r in records:
@@ -251,7 +251,7 @@ def upsert_stores(records: Iterable[dict], db_path: Optional[str] = None) -> lis
 
 
 def get_stores_by_ids(
-    ids: list[str], db_path: Optional[str] = None
+    ids: list[str], db_path: str | None = None
 ) -> pd.DataFrame:
     """Bulk fetch stores by id, joined with their latest rating row."""
     if not ids:
@@ -291,7 +291,7 @@ def save_query_result(
     city: str,
     store_ids: list[str],
     source: str,
-    db_path: Optional[str] = None,
+    db_path: str | None = None,
 ) -> None:
     """Record that `(brand, city)` currently resolves to `store_ids` (from `source`)."""
     conn = _get_conn(db_path)
@@ -314,8 +314,8 @@ def lookup_query(
     brand: str,
     city: str,
     max_age: int = QUERY_TTL_DEFAULT,
-    db_path: Optional[str] = None,
-) -> Optional[pd.DataFrame]:
+    db_path: str | None = None,
+) -> pd.DataFrame | None:
     """
     Look up a prior `(brand, city)` result. Returns a DataFrame of stores
     if the cached entry exists and is within `max_age` seconds; else None.
@@ -357,8 +357,8 @@ def get_source_cache(
     city: str,
     source: str,
     ttl: int,
-    db_path: Optional[str] = None,
-) -> Optional[pd.DataFrame]:
+    db_path: str | None = None,
+) -> pd.DataFrame | None:
     """Return the cached adapter DataFrame if present and within `ttl` seconds."""
     b, c, s = _source_cache_key(brand, city, source)
     conn = _get_conn(db_path)
@@ -385,7 +385,7 @@ def set_source_cache(
     city: str,
     source: str,
     df: pd.DataFrame,
-    db_path: Optional[str] = None,
+    db_path: str | None = None,
 ) -> None:
     """Upsert the adapter DataFrame for (brand, city, source)."""
     b, c, s = _source_cache_key(brand, city, source)
@@ -428,11 +428,11 @@ SOURCE_COST_USD = {
 
 def log_api_call(
     source: str,
-    brand: Optional[str] = None,
-    city: Optional[str] = None,
+    brand: str | None = None,
+    city: str | None = None,
     success: bool = True,
-    cost: Optional[float] = None,
-    db_path: Optional[str] = None,
+    cost: float | None = None,
+    db_path: str | None = None,
 ) -> None:
     """Record a single API call. `cost` defaults to the SOURCE_COST_USD entry."""
     if cost is None:
@@ -451,7 +451,7 @@ def log_api_call(
         conn.close()
 
 
-def cumulative_api_cost(db_path: Optional[str] = None) -> dict[str, Any]:
+def cumulative_api_cost(db_path: str | None = None) -> dict[str, Any]:
     """Return {total_usd, by_source: {...}, total_calls}."""
     conn = _get_conn(db_path)
     try:
@@ -490,8 +490,8 @@ def _brand_key(brand: str) -> str:
 
 
 def get_brand_metadata(
-    brand: str, db_path: Optional[str] = None
-) -> Optional[dict[str, Any]]:
+    brand: str, db_path: str | None = None
+) -> dict[str, Any] | None:
     """Return the stored brand_metadata row as a dict, or None."""
     conn = _get_conn(db_path)
     try:
@@ -513,12 +513,12 @@ def get_brand_metadata(
 
 def upsert_brand_metadata(
     brand: str,
-    total_stores_estimate: Optional[int],
+    total_stores_estimate: int | None,
     source: str,
     confidence: float,
-    known_cities: Optional[list[str]] = None,
-    full_scrape_completed_at: Optional[float] = None,
-    db_path: Optional[str] = None,
+    known_cities: list[str] | None = None,
+    full_scrape_completed_at: float | None = None,
+    db_path: str | None = None,
 ) -> None:
     """Insert or update a brand_metadata row. `last_refreshed` is stamped now."""
     conn = _get_conn(db_path)
@@ -570,7 +570,7 @@ def upsert_brand_metadata(
 
 
 def add_known_city_for_brand(
-    brand: str, city: str, db_path: Optional[str] = None
+    brand: str, city: str, db_path: str | None = None
 ) -> None:
     """Append `city` to the brand's known_cities list (idempotent)."""
     meta = get_brand_metadata(brand, db_path=db_path)
@@ -590,7 +590,7 @@ def add_known_city_for_brand(
 def mark_store_enriched(
     store_id: str,
     source: str = "google_places",
-    db_path: Optional[str] = None,
+    db_path: str | None = None,
 ) -> None:
     """Stamp a store as enriched by `source` as of now."""
     conn = _get_conn(db_path)
@@ -608,7 +608,7 @@ def get_unenriched_store_ids(
     brand: str,
     cities: list[str],
     ttl_sec: int = ENRICHMENT_TTL_SEC,
-    db_path: Optional[str] = None,
+    db_path: str | None = None,
 ) -> list[dict]:
     """
     Return stores for `brand` in `cities` that lack a fresh enrichment stamp.
@@ -639,8 +639,8 @@ def get_unenriched_store_ids(
 
 def count_enriched_stores_for_brand(
     brand: str,
-    cities: Optional[list[str]] = None,
-    db_path: Optional[str] = None,
+    cities: list[str] | None = None,
+    db_path: str | None = None,
 ) -> int:
     """Store rows for `brand` (optionally within `cities`)."""
     conn = _get_conn(db_path)
@@ -670,7 +670,7 @@ def record_discovered_competitor(
     brand: str,
     category: str,
     source: str = "category_query",
-    db_path: Optional[str] = None,
+    db_path: str | None = None,
 ) -> None:
     """Idempotent upsert: first-seen stamps now; subsequent calls bump last_seen + times_seen."""
     brand = (brand or "").strip()
@@ -697,7 +697,7 @@ def record_discovered_competitor(
 
 
 def get_discovered_competitors(
-    category: str, db_path: Optional[str] = None
+    category: str, db_path: str | None = None
 ) -> list[dict[str, Any]]:
     """Return all rows for `category`, ordered by manually_verified DESC, times_seen DESC."""
     conn = _get_conn(db_path)
@@ -717,7 +717,7 @@ def get_discovered_competitors(
     return [dict(r) for r in rows]
 
 
-def verify_discovered_competitor(brand: str, db_path: Optional[str] = None) -> None:
+def verify_discovered_competitor(brand: str, db_path: str | None = None) -> None:
     conn = _get_conn(db_path)
     try:
         conn.execute(
@@ -729,7 +729,7 @@ def verify_discovered_competitor(brand: str, db_path: Optional[str] = None) -> N
         conn.close()
 
 
-def delete_discovered_competitor(brand: str, db_path: Optional[str] = None) -> None:
+def delete_discovered_competitor(brand: str, db_path: str | None = None) -> None:
     conn = _get_conn(db_path)
     try:
         conn.execute("DELETE FROM discovered_competitors WHERE brand = ?", (brand,))
@@ -738,7 +738,7 @@ def delete_discovered_competitor(brand: str, db_path: Optional[str] = None) -> N
         conn.close()
 
 
-def list_all_discovered_competitors(db_path: Optional[str] = None) -> list[dict[str, Any]]:
+def list_all_discovered_competitors(db_path: str | None = None) -> list[dict[str, Any]]:
     conn = _get_conn(db_path)
     try:
         rows = conn.execute(
@@ -754,7 +754,7 @@ def list_all_discovered_competitors(db_path: Optional[str] = None) -> list[dict[
     return [dict(r) for r in rows]
 
 
-def db_stats(db_path: Optional[str] = None) -> dict[str, Any]:
+def db_stats(db_path: str | None = None) -> dict[str, Any]:
     """Counts across the core tables. Cheap; safe to call from the UI."""
     conn = _get_conn(db_path)
     try:

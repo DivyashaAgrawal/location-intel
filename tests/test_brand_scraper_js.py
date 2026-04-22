@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import importlib
-
 import pandas as pd
-import pytest
 
 from src.fetchers import brand_scraper, brand_scraper_js
 

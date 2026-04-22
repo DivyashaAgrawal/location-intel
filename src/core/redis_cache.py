@@ -10,7 +10,6 @@ back to SQLite.
 from __future__ import annotations
 
 import json
-from typing import Optional
 
 import pandas as pd
 
@@ -63,7 +62,7 @@ def get_cached(
     brand: str,
     city: str,
     source: str = "",
-) -> Optional[pd.DataFrame]:
+) -> pd.DataFrame | None:
     """
     Return the cached DataFrame for (brand, city, source) or None.
 
@@ -86,7 +85,7 @@ def set_cached(
     city: str,
     source: str,
     df: pd.DataFrame,
-    ttl: Optional[int] = None,
+    ttl: int | None = None,
 ) -> None:
     """
     Store a DataFrame under (brand, city, source). If `ttl` is not supplied,

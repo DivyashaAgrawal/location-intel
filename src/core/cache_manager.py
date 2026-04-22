@@ -18,17 +18,15 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from typing import Callable, Optional, Tuple
+from collections.abc import Callable
 
 import pandas as pd
 
-from src.core import config
-from src.core import db
-from src.core import redis_cache
+from src.core import config, db, redis_cache
 
 logger = logging.getLogger(__name__)
 
-_redis_available: Optional[bool] = None
+_redis_available: bool | None = None
 
 
 def _redis_ok() -> bool:
@@ -49,7 +47,7 @@ def get_cached(
     brand: str,
     city: str,
     source: str = "",
-) -> Optional[pd.DataFrame]:
+) -> pd.DataFrame | None:
     """Look up a cached DataFrame. Redis first, DB source_cache fallback."""
     if _redis_ok():
         try:
@@ -66,7 +64,7 @@ def set_cached(
     city: str,
     df: pd.DataFrame,
     source: str = "",
-    ttl: Optional[int] = None,
+    ttl: int | None = None,
 ) -> None:
     """
     Write to Redis (if available) and always to the DB source_cache.
@@ -109,7 +107,7 @@ def _redis_client():
         return None
 
 
-def _redis_get_query(brand: str, city: str) -> Optional[pd.DataFrame]:
+def _redis_get_query(brand: str, city: str) -> pd.DataFrame | None:
     client = _redis_client()
     if client is None:
         return None
@@ -140,11 +138,11 @@ def smart_fetch(
     brand: str,
     city: str,
     *,
-    live_fetcher: Optional[Callable[[str, str], pd.DataFrame]] = None,
-    reconciler: Optional[Callable[[pd.DataFrame], pd.DataFrame]] = None,
-    mock_fetcher: Optional[Callable[[str, str], pd.DataFrame]] = None,
+    live_fetcher: Callable[[str, str], pd.DataFrame] | None = None,
+    reconciler: Callable[[pd.DataFrame], pd.DataFrame] | None = None,
+    mock_fetcher: Callable[[str, str], pd.DataFrame] | None = None,
     max_db_age: int = db.QUERY_TTL_DEFAULT,
-) -> Tuple[pd.DataFrame, str]:
+) -> tuple[pd.DataFrame, str]:
     """
     Three-layer fetch for a `(brand, city)` query.
 
@@ -174,8 +172,8 @@ def smart_fetch(
 
     # ---- Layer 3: live APIs ----
     if live_fetcher is None or reconciler is None:
-        from src.fetchers import multi_fetcher
         from src.analysis import reconciler as _rec
+        from src.fetchers import multi_fetcher
         live_fetcher = live_fetcher or (lambda b, c: multi_fetcher.fetch_multi_source(b, [c]))
         reconciler = reconciler or _rec.reconcile
 
@@ -248,7 +246,7 @@ def smart_fetch_with_enrichment(
     brand: str,
     cities: list[str],
     query_type: str = "brand",
-) -> Tuple[pd.DataFrame, dict]:
+) -> tuple[pd.DataFrame, dict]:
     """
     Two-stage fetch: authoritative national footprint, then lazy per-city
     enrichment.
@@ -515,10 +513,10 @@ def estimate_brand_size(
             if age < BRAND_METADATA_TTL_SEC:
                 return _shape_brand_size_result(brand, cached, is_stale=False, latency_ms=0)
 
-    total: Optional[int] = None
+    total: int | None = None
     source = "unknown"
     confidence = 0.0
-    full_scrape_ts: Optional[float] = None
+    full_scrape_ts: float | None = None
 
     from src.fetchers import brand_scraper
 
@@ -588,7 +586,7 @@ def _shape_brand_size_result(
     }
 
 
-def _estimate_via_full_scrape(brand: str) -> tuple[Optional[int], Optional[float]]:
+def _estimate_via_full_scrape(brand: str) -> tuple[int | None, float | None]:
     """Run the full registry-driven scrape once; count results as the size."""
     import time as _time
     try:
@@ -602,7 +600,7 @@ def _estimate_via_full_scrape(brand: str) -> tuple[Optional[int], Optional[float
     return int(len(df)), _time.time()
 
 
-def _estimate_via_places_pagination(brand: str) -> tuple[Optional[int], bool]:
+def _estimate_via_places_pagination(brand: str) -> tuple[int | None, bool]:
     """
     Fallback for brands absent from the scraper registry: paginate Google
     Places nationally and use the total row count as a size estimate.

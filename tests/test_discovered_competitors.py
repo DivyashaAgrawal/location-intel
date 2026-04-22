@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from src.analysis import competitor
 from src.core import db
 from src.fetchers import multi_fetcher

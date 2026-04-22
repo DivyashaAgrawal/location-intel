@@ -14,21 +14,22 @@ it automatically with a warning.
 """
 from __future__ import annotations
 
-import logging
-
 import json
+import logging
 import random
 import time
+
+import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-import pandas as pd
+
 from src.core.config import OLLAMA_BASE_URL, OLLAMA_MODEL
 from src.fetchers._common import extract_pincode
 
 logger = logging.getLogger(__name__)
 
 
-BRAND_REGISTRY = {
+BRAND_REGISTRY: dict[str, dict] = {
     "Dominos Pizza": {
         "store_locator_url": "https://www.dominos.co.in/store-locator",
         "api_url": "https://www.dominos.co.in/api/store-locator/search?city={city}",
@@ -339,7 +340,7 @@ def scrape_brand_html(brand: str, url: str, cities: list[str]) -> list[dict]:
             text = text[:3000]
 
         if not text.strip():
-            logger.info(f"    No text content found on brand page")
+            logger.info("    No text content found on brand page")
             return []
 
         stores = _parse_stores_with_ollama(text, brand, cities)
@@ -469,3 +470,34 @@ def scrape_brand_stores(
     df = pd.DataFrame(stores)
     logger.info(f"    Extracted {len(df)} stores from {brand} website")
     return df
+
+
+def _main() -> int:
+    """Run the registry end-to-end against a small test city set.
+
+    Acceptance item for Phase 1: `python -m src.fetchers.brand_scraper`
+    must traverse the registry without crashing, logging per-brand
+    dispatcher outcomes.
+    """
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    test_cities = ["Delhi"]
+    summary: list[tuple[str, str, int]] = []
+    for brand_name, info in BRAND_REGISTRY.items():
+        method = info.get("extraction_method", "?")
+        try:
+            df = scrape_brand_stores(brand_name, test_cities)
+            summary.append((brand_name, method, len(df)))
+        except Exception as e:
+            logger.warning("    %s crashed: %s", brand_name, e)
+            summary.append((brand_name, method, -1))
+    logger.info("")
+    logger.info("Registry traversal complete:")
+    for brand_name, method, count in summary:
+        tag = "error" if count < 0 else f"{count} stores"
+        logger.info("  %-18s method=%-12s %s", brand_name, method, tag)
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(_main())

@@ -14,9 +14,7 @@ Places unit cost. If `GOOGLE_PLACES_API_KEY` is unset the adapter returns
 from __future__ import annotations
 
 import logging
-
 import time
-from typing import Optional
 
 import requests
 
@@ -49,7 +47,7 @@ MAX_PAGES = 3
 PAGE_SIZE = 20
 
 
-def _component(components: list[dict], kind: str) -> Optional[str]:
+def _component(components: list[dict], kind: str) -> str | None:
     """Return the longText of the address component whose `types` contains `kind`."""
     for c in components or []:
         if kind in (c.get("types") or []):
@@ -57,7 +55,7 @@ def _component(components: list[dict], kind: str) -> Optional[str]:
     return None
 
 
-def _extract_pincode(address: str, components: list[dict]) -> Optional[str]:
+def _extract_pincode(address: str, components: list[dict]) -> str | None:
     # Prefer the structured postal_code component; fall back to address regex.
     pc = _component(components, "postal_code")
     if pc:
@@ -95,10 +93,10 @@ def _normalize_place(place: dict, brand: str, city: str) -> dict:
 def search_text(
     brand: str,
     city: str,
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     max_pages: int = MAX_PAGES,
     page_size: int = PAGE_SIZE,
-    session: Optional[requests.Session] = None,
+    session: requests.Session | None = None,
 ) -> list[dict]:
     """
     Search Google Places v1 for `"{brand} in {city}, India"`, paginating up to
@@ -129,7 +127,7 @@ def search_text(
         }
 
     results: list[dict] = []
-    page_token: Optional[str] = None
+    page_token: str | None = None
 
     for page in range(max_pages):
         body: dict = {

@@ -1,10 +1,5 @@
 from __future__ import annotations
 
-import time
-
-import pandas as pd
-import pytest
-
 from src.core import cache_manager, db
 from src.fetchers import brand_scraper, brand_scraper_js
 

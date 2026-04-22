@@ -10,8 +10,9 @@ Takes raw records from multiple sources (Serper, OSM, brand website) and:
 """
 from __future__ import annotations
 
+from math import asin, cos, radians, sin, sqrt
+
 import pandas as pd
-from math import radians, cos, sin, asin, sqrt
 
 SOURCE_PRIORITY = {
     "google_places": {

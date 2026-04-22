@@ -3,7 +3,22 @@ from __future__ import annotations
 import logging
 
 import pandas as pd
-from src.nlu import parse_query
+
+from src.analysis.aggregator import (
+    aggregate_stores,
+    create_comparison_table,
+    generate_executive_summary,
+)
+from src.analysis.competitor import run_competitor_analysis
+from src.analysis.market_analysis import (
+    compute_store_density,
+    generate_ic_memo_points,
+    peer_benchmark,
+    whitespace_analysis,
+)
+from src.analysis.pincode_mapper import enrich_with_pincodes
+from src.analysis.reconciler import reconcile, reconciliation_report
+from src.analysis.sentiment import enrich_sentiment_from_ratings
 from src.core.cache_manager import (
     estimate_brand_size,
     estimate_enrichment_needed,
@@ -12,12 +27,7 @@ from src.core.cache_manager import (
     smart_fetch_with_enrichment,
 )
 from src.core.config import MAX_ENRICHMENT_CALLS_PER_QUERY, TIER_1_CITIES
-from src.analysis.reconciler import reconcile, reconciliation_report
-from src.analysis.competitor import run_competitor_analysis
-from src.analysis.pincode_mapper import enrich_with_pincodes
-from src.analysis.sentiment import enrich_sentiment_from_ratings
-from src.analysis.aggregator import aggregate_stores, create_comparison_table, generate_executive_summary
-from src.analysis.market_analysis import compute_store_density, whitespace_analysis, peer_benchmark, generate_ic_memo_points
+from src.nlu import parse_query
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +190,6 @@ def run_pipeline(
 
     else:
         logger.info("[2/8] Brand fetch via smart_fetch_with_enrichment...")
-        enrichment_metadata_by_brand: dict[str, dict] = {}
         for brand in brands:
             try:
                 brand_df, fetch_meta = smart_fetch_with_enrichment(brand, cities)

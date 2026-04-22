@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 
 def extract_brand_from_title(title: str) -> str:
@@ -13,7 +12,7 @@ def extract_brand_from_title(title: str) -> str:
     return (title or "").strip()
 
 
-def extract_pincode(address: str) -> Optional[str]:
+def extract_pincode(address: str) -> str | None:
     """Extract the first 6-digit Indian pincode from an address string."""
     if not address:
         return None

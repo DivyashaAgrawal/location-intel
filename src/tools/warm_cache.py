@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     try:
-        from tqdm import tqdm                      # type: ignore
+        from tqdm import tqdm  # type: ignore
         iterator = tqdm(pairs, desc="warming")
     except ImportError:
         iterator = pairs

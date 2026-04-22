@@ -7,11 +7,12 @@ Free, no API key needed, just needs a user agent string.
 from __future__ import annotations
 
 import logging
-
 import time
-from geopy.geocoders import Nominatim
-from geopy.exc import GeocoderTimedOut
+
 import pandas as pd
+from geopy.exc import GeocoderTimedOut
+from geopy.geocoders import Nominatim
+
 from src.core.config import NOMINATIM_USER_AGENT
 from src.fetchers._common import extract_pincode
 

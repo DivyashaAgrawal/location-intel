@@ -34,7 +34,7 @@ def _render_blocked(result: dict) -> None:
     if tier1:
         st.markdown("**Try instead (tier-1 cities):**")
         cols = st.columns(len(tier1))
-        for col, city in zip(cols, tier1):
+        for col, city in zip(cols, tier1, strict=False):
             q = f"{brand} in {city}"
             if col.button(q, key=f"blocked-suggest-{brand}-{city}"):
                 st.session_state["query_input"] = q

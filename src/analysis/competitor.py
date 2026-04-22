@@ -14,8 +14,7 @@ Outputs are three DataFrames + a list of memo bullets suitable for an IC deck.
 from __future__ import annotations
 
 import logging
-
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import pandas as pd
 
