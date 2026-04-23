@@ -23,7 +23,7 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
-from src.core.config import OLLAMA_BASE_URL, OLLAMA_MODEL
+from src.caching.config import OLLAMA_BASE_URL, OLLAMA_MODEL
 from src.fetchers._common import extract_pincode
 
 logger = logging.getLogger(__name__)

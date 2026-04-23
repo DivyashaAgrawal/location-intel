@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from src import logging_setup
-from src.core import db as _db
+from src.caching import db as _db
+from src.core import logging_setup
 
 logging_setup.configure()
 logger = logging.getLogger("export_data")

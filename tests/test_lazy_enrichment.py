@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.core import cache_manager, db
+from src.caching import cache_manager, db
 
 
 @pytest.fixture
@@ -52,7 +52,7 @@ def stub_places(monkeypatch):
     from src.fetchers import google_places
     monkeypatch.setattr(google_places, "search_text", fake_search)
     # Enable enrichment path by simulating a key
-    from src.core import config
+    from src.caching import config
     monkeypatch.setattr(config, "GOOGLE_PLACES_API_KEY", "test-key")
 
 

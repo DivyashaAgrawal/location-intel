@@ -123,6 +123,22 @@ CREATE TABLE IF NOT EXISTS api_call_log (
 );
 
 CREATE INDEX IF NOT EXISTS ix_api_log_source ON api_call_log(source, called_at);
+
+CREATE TABLE IF NOT EXISTS brand_registry (
+    brand_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    canonical_name   TEXT NOT NULL UNIQUE,
+    aliases_json     TEXT,
+    category         TEXT,
+    source           TEXT NOT NULL,
+    times_queried    INTEGER DEFAULT 0,
+    verified         INTEGER DEFAULT 0,
+    added_at         REAL NOT NULL,
+    last_seen_at     REAL
+);
+
+CREATE INDEX IF NOT EXISTS idx_brand_category ON brand_registry(category);
+CREATE INDEX IF NOT EXISTS idx_brand_source ON brand_registry(source);
+CREATE INDEX IF NOT EXISTS idx_brand_name_lower ON brand_registry(LOWER(canonical_name));
 """
 
 def _get_conn(db_path: str | None = None) -> sqlite3.Connection:
@@ -754,6 +770,163 @@ def list_all_discovered_competitors(db_path: str | None = None) -> list[dict[str
     return [dict(r) for r in rows]
 
 
+# ---------------------------------------------------------------------------
+# Brand registry (Phase 5)
+# ---------------------------------------------------------------------------
+
+def upsert_brand_to_registry(
+    canonical_name: str,
+    aliases: list[str] | None = None,
+    category: str | None = None,
+    source: str = "manual",
+    verified: int | bool = 0,
+    db_path: str | None = None,
+) -> int | None:
+    """
+    Insert or update a row in `brand_registry`.
+
+    First-write stamps `added_at` now. Re-runs update `last_seen_at`, merge aliases,
+    keep the highest-trust `source`/`verified` values already recorded, and only
+    overwrite `category` when the new value is non-empty.
+    """
+    name = (canonical_name or "").strip()
+    if not name:
+        return None
+    now = time.time()
+    verified_flag = 1 if int(bool(verified)) else 0
+    conn = _get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT brand_id, aliases_json, category, source, verified "
+            "FROM brand_registry WHERE LOWER(canonical_name) = LOWER(?)",
+            (name,),
+        ).fetchone()
+
+        incoming_aliases = {a.strip() for a in (aliases or []) if a and a.strip()}
+
+        if row is None:
+            aliases_json = json.dumps(sorted(incoming_aliases)) if incoming_aliases else None
+            cur = conn.execute(
+                """
+                INSERT INTO brand_registry
+                  (canonical_name, aliases_json, category, source,
+                   times_queried, verified, added_at, last_seen_at)
+                VALUES (?, ?, ?, ?, 0, ?, ?, ?)
+                """,
+                (name, aliases_json, category, source, verified_flag, now, now),
+            )
+            conn.commit()
+            return int(cur.lastrowid)
+
+        existing_aliases = set()
+        if row["aliases_json"]:
+            try:
+                existing_aliases = set(json.loads(row["aliases_json"]))
+            except (ValueError, TypeError):
+                existing_aliases = set()
+        merged_aliases = sorted(existing_aliases | incoming_aliases)
+        aliases_json = json.dumps(merged_aliases) if merged_aliases else None
+
+        new_category = category or row["category"]
+        new_verified = 1 if (verified_flag or int(row["verified"] or 0)) else 0
+
+        source_priority = {
+            "manual": 4,
+            "seed": 3,
+            "discovered_scraper": 2,
+            "discovered_category": 1,
+        }
+        new_source = (
+            source
+            if source_priority.get(source, 0) >= source_priority.get(row["source"], 0)
+            else row["source"]
+        )
+
+        conn.execute(
+            """
+            UPDATE brand_registry
+            SET aliases_json = ?, category = ?, source = ?, verified = ?,
+                last_seen_at = ?
+            WHERE brand_id = ?
+            """,
+            (aliases_json, new_category, new_source, new_verified, now, row["brand_id"]),
+        )
+        conn.commit()
+        return int(row["brand_id"])
+    finally:
+        conn.close()
+
+
+def get_brand_from_registry(
+    canonical_name: str, db_path: str | None = None
+) -> dict[str, Any] | None:
+    conn = _get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT * FROM brand_registry WHERE LOWER(canonical_name) = LOWER(?)",
+            ((canonical_name or "").strip(),),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    d = dict(row)
+    try:
+        d["aliases"] = json.loads(d.get("aliases_json") or "[]")
+    except (ValueError, TypeError):
+        d["aliases"] = []
+    return d
+
+
+def list_all_brands_in_registry(db_path: str | None = None) -> list[dict[str, Any]]:
+    conn = _get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT brand_id, canonical_name, aliases_json, category, source, "
+            "times_queried, verified, added_at, last_seen_at "
+            "FROM brand_registry ORDER BY canonical_name"
+        ).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["aliases"] = json.loads(d.get("aliases_json") or "[]")
+        except (ValueError, TypeError):
+            d["aliases"] = []
+        out.append(d)
+    return out
+
+
+def increment_brand_queried(canonical_name: str, db_path: str | None = None) -> None:
+    conn = _get_conn(db_path)
+    try:
+        conn.execute(
+            """
+            UPDATE brand_registry
+            SET times_queried = times_queried + 1, last_seen_at = ?
+            WHERE LOWER(canonical_name) = LOWER(?)
+            """,
+            (time.time(), (canonical_name or "").strip()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def count_new_brands_since(cutoff_ts: float, db_path: str | None = None) -> int:
+    conn = _get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM brand_registry WHERE added_at > ?",
+            (cutoff_ts,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return int(row["n"]) if row else 0
+
+
 def db_stats(db_path: str | None = None) -> dict[str, Any]:
     """Counts across the core tables. Cheap; safe to call from the UI."""
     conn = _get_conn(db_path)
@@ -765,6 +938,7 @@ def db_stats(db_path: str | None = None) -> dict[str, Any]:
             "store_ratings": _count("store_ratings"),
             "query_cache_entries": _count("query_cache"),
             "api_calls": _count("api_call_log"),
+            "brands_in_registry": _count("brand_registry"),
         }
     finally:
         conn.close()

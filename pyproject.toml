@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "location-intel"
-version = "0.2.0"
+version = "0.0.1"
 description = "Natural-language location intelligence."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -44,9 +44,16 @@ dev = [
 playwright = [
     "playwright>=1.45.0",
 ]
+# Enables embedding-based brand resolution (FAISS + sentence-transformers).
+# Adds ~500MB of dependencies (torch). Without these the resolver falls back
+# to exact substring matching against the brand_registry table.
+embeddings = [
+    "sentence-transformers>=3.0.0",
+    "faiss-cpu>=1.8.0",
+]
 
 [project.scripts]
-location-intel = "src.cli:main"
+location-intel = "src.core.cli:main"
 warm-cache = "src.tools.warm_cache:main"
 export-data = "src.tools.export_data:main"
 

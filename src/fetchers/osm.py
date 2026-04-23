@@ -11,7 +11,7 @@ import re
 
 import requests
 
-from src.core.config import INDIA_MAJOR_CITIES
+from src.caching.config import INDIA_MAJOR_CITIES, NOMINATIM_USER_AGENT
 from src.fetchers._common import extract_brand_from_title
 
 logger = logging.getLogger(__name__)
@@ -39,10 +39,14 @@ def fetch(query: str, city: str, radius_m: int = 15000) -> list[dict]:
     """
 
     try:
+        # Overpass returns 406 if the User-Agent looks like a generic bot
+        # (e.g. default `python-requests/x.y`). A descriptive UA is required
+        # by their usage policy. `[out:json]` in the query body drives the
+        # response content type, so no `Accept` header is needed.
         resp = requests.post(
             OVERPASS_URL,
             data={"data": overpass_query},
-            headers={"Accept": "application/json"},
+            headers={"User-Agent": NOMINATIM_USER_AGENT},
             timeout=30,
         )
         resp.raise_for_status()

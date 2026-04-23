@@ -11,8 +11,8 @@ import logging
 
 import requests
 
-from src.core import db
-from src.core.config import INDIA_MAJOR_CITIES, SERPER_API_KEY
+from src.caching import db
+from src.caching.config import INDIA_MAJOR_CITIES, SERPER_API_KEY
 from src.fetchers._common import extract_brand_from_title, extract_pincode
 
 logger = logging.getLogger(__name__)

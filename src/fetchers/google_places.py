@@ -18,8 +18,8 @@ import time
 
 import requests
 
-from src.core import db
-from src.core.config import GOOGLE_PLACES_API_KEY, INDIA_MAJOR_CITIES
+from src.caching import db
+from src.caching.config import GOOGLE_PLACES_API_KEY, INDIA_MAJOR_CITIES
 from src.fetchers._common import extract_pincode
 
 logger = logging.getLogger(__name__)
@@ -129,7 +129,7 @@ def search_text(
     results: list[dict] = []
     page_token: str | None = None
 
-    for page in range(max_pages):
+    for _ in range(max_pages):
         body: dict = {
             "textQuery": f"{brand} in {city}, India",
             "pageSize": page_size,

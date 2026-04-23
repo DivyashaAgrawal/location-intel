@@ -13,7 +13,7 @@ import json
 
 import pandas as pd
 
-from src.core.config import REDIS_URL
+from src.caching.config import REDIS_URL
 
 DEFAULT_TTL = 7 * 24 * 3600
 

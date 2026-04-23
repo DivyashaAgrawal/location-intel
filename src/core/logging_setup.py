@@ -1,11 +1,4 @@
 """
-Centralised logging configuration.
-
-Call `configure()` once at application entry (the Streamlit UI module or a
-CLI tool under `src.tools`). Every module uses
-`logging.getLogger(__name__)` and inherits this setup: stdout + rotating
-file at `logs/app.log` (10 MB x 5).
-
 Never log API keys, user queries that could contain PII, or full response
 bodies -- the handlers don't filter for you.
 """

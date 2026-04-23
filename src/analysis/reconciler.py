@@ -139,7 +139,7 @@ def reconcile(df):
     ]
 
     merged = []
-    for cid, group in df.groupby("cluster_id"):
+    for _, group in df.groupby("cluster_id"):
         row = {f: _best_value(group, f) for f in merge_fields}
         row["sources"] = ",".join(sorted(group["source"].unique()))
         row["source_count"] = group["source"].nunique()

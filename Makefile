@@ -27,7 +27,7 @@ type:  ## Run type checks (mypy)
 	$(ACT) && mypy src/
 
 run:  ## Start the web app (streamlit)
-	$(ACT) && streamlit run src/app.py
+	$(ACT) && streamlit run src/core/app.py
 
 warm:  ## Pre-warm the cache. Usage: make warm BRANDS="Dominos Pizza" CITIES="Delhi,Mumbai"
 	$(ACT) && python -m src.tools.warm_cache --brands "$(BRANDS)" --cities "$(CITIES)"

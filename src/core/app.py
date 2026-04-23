@@ -3,8 +3,8 @@ import io
 import pandas as pd
 import streamlit as st
 
-from src.core import cache_manager
-from src.pipeline import run_pipeline
+from src.caching import cache_manager
+from src.core.pipeline import run_pipeline
 
 
 def _render_blocked(result: dict) -> None:
@@ -107,13 +107,13 @@ def render() -> None:
                 st.write("**By source**")
                 st.dataframe(
                     pd.DataFrame(cost["by_source"]),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
 
         st.divider()
         with st.expander("Discovered competitors", expanded=False):
-            from src.core import db as _db
+            from src.caching import db as _db
             rows = _db.list_all_discovered_competitors()
             if not rows:
                 st.caption(
@@ -147,7 +147,7 @@ def render() -> None:
             "city wise Dominos vs Pizzahut vs la pinoz across all metros",
         ]
         for ex in examples:
-            if st.button(f"-> {ex[:55]}...", key=ex, use_container_width=True):
+            if st.button(f"-> {ex[:55]}...", key=ex, width="stretch"):
                 st.session_state["query_input"] = ex
 
     query = st.text_area(
@@ -217,7 +217,7 @@ def render() -> None:
             fs = result.get("fetch_sources", {})
             if fs:
                 rows = [{"query": k, "answered_by": v} for k, v in fs.items()]
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
                 counts = pd.Series(list(fs.values())).value_counts().to_dict()
                 st.caption(f"Source mix: {counts}")
             else:
@@ -294,7 +294,7 @@ def render() -> None:
 
                 st.caption(f"Showing {len(display_df)} of {total_rows} rows")
                 st.dataframe(
-                    display_df, use_container_width=True, hide_index=True,
+                    display_df, width="stretch", hide_index=True,
                     column_config={
                         "avg_rating": st.column_config.NumberColumn("Avg Rating", format="%.1f"),
                         "total_reviews": st.column_config.NumberColumn("Total Reviews", format="%d"),
@@ -314,7 +314,7 @@ def render() -> None:
 
             if result.get("comparison_table") is not None:
                 st.subheader("Brand Comparison")
-                st.dataframe(result["comparison_table"], use_container_width=True, hide_index=True)
+                st.dataframe(result["comparison_table"], width="stretch", hide_index=True)
 
         with tab_competitor:
             comp = result.get("competitor_analysis")
@@ -349,7 +349,7 @@ def render() -> None:
                     )
                     st.dataframe(
                         display_sov.drop(columns=["is_focal_brand"]),
-                        use_container_width=True, hide_index=True,
+                        width="stretch", hide_index=True,
                         column_config={
                             "share_of_voice_%": st.column_config.ProgressColumn(
                                 "Share of Voice", min_value=0, max_value=100, format="%.1f%%",
@@ -375,7 +375,7 @@ def render() -> None:
 
                     st.dataframe(
                         terr.style.apply(_colour, axis=1),
-                        use_container_width=True, hide_index=True,
+                        width="stretch", hide_index=True,
                     )
 
                     counts = terr["territory"].value_counts().to_dict()
@@ -401,7 +401,7 @@ def render() -> None:
                     st.markdown("**Store Density (stores per 100K population)**")
                     st.dataframe(
                         density[["city", "city_tier", "store_count", "population", "stores_per_100k", "avg_rating"]],
-                        use_container_width=True, hide_index=True,
+                        width="stretch", hide_index=True,
                         column_config={
                             "stores_per_100k": st.column_config.NumberColumn("Per 100K", format="%.2f"),
                             "population": st.column_config.NumberColumn("Population", format="%d"),
@@ -413,7 +413,7 @@ def render() -> None:
                     st.dataframe(
                         ws[["city", "city_tier", "population", "current_stores", "stores_per_100k",
                             "opportunity", "expansion_score"]],
-                        use_container_width=True, hide_index=True,
+                        width="stretch", hide_index=True,
                         column_config={
                             "expansion_score": st.column_config.ProgressColumn(
                                 "Score", min_value=0, max_value=100, format="%.0f",
@@ -431,7 +431,7 @@ def render() -> None:
             if benchmark is not None and not benchmark.empty:
                 st.subheader("Brand Comparison Matrix")
                 st.dataframe(
-                    benchmark, use_container_width=True, hide_index=True,
+                    benchmark, width="stretch", hide_index=True,
                     column_config={
                         "tier1_coverage_%": st.column_config.ProgressColumn(
                             "Tier 1 Coverage %", min_value=0, max_value=100, format="%.0f%%",
@@ -458,7 +458,7 @@ def render() -> None:
                             "sources", "source_count", "data_quality"]
                 if c in raw.columns
             ]
-            st.dataframe(raw[display_cols], use_container_width=True, hide_index=True)
+            st.dataframe(raw[display_cols], width="stretch", hide_index=True)
 
             st.subheader("Export")
             buf = io.BytesIO()

@@ -33,7 +33,7 @@ git clone <repo-url>
 cd location-intel
 make setup     # venv, deps, Ollama + model, Redis install + start, DB init
 make env       # opens .env in $EDITOR -- add GOOGLE_PLACES_API_KEY (SERPER_API_KEY optional)
-make run       # streamlit run src/app.py
+make run       # streamlit run src/core/app.py
 ```
 
 Run `make` on its own for the full list of commands.
@@ -57,20 +57,25 @@ Core modules:
 
 | Module | Role |
 |---|---|
-| `src/nlu.py` | NL -> structured query (Ollama + rule-based fallback) |
-| `src/core/cache_manager.py` | `smart_fetch`: Redis -> DB -> API |
-| `src/core/db.py` | Persistent stores + query_cache + source_cache + api_call_log |
+| `src/core/nlu.py` | NL -> structured query (Ollama + rule-based fallback) |
+| `src/brand_resolver.py` | Query phrase -> canonical brand via registry + FAISS |
+| `src/caching/cache_manager.py` | `smart_fetch`: Redis -> DB -> API |
+| `src/caching/db.py` | Persistent stores + query_cache + source_cache + api_call_log + brand_metadata + discovered_competitors |
+| `src/caching/config.py` | Env + constants (API keys, tier-1 cities, thresholds) |
+| `src/caching/redis_cache.py` | Redis hot-cache wrapper |
 | `src/fetchers/multi_fetcher.py` | Orchestrates adapters |
 | `src/fetchers/google_places.py` | Primary maps source (Places v1) |
 | `src/fetchers/serper.py` | Maps fallback |
 | `src/fetchers/osm.py` | OpenStreetMap POI |
 | `src/fetchers/brand_scraper.py` | Per-brand first-party scrapers |
+| `src/fetchers/brand_scraper_js.py` | Playwright-backed scraper for JS-rendered locators |
 | `src/analysis/reconciler.py` | Cross-source dedup + field merge |
 | `src/analysis/competitor.py` | Auto competitor + territory classification |
 | `src/analysis/aggregator.py` | Pincode / city / state rollup |
 | `src/analysis/market_analysis.py` | Density, whitespace, IC memo |
-| `src/app.py` | Streamlit UI |
-| `src/pipeline.py` | End-to-end orchestrator |
+| `src/core/app.py` | Streamlit UI |
+| `src/core/pipeline.py` | End-to-end orchestrator |
+| `src/core/cli.py` | Console-script launcher |
 
 ---
 
@@ -115,11 +120,94 @@ playwright install chromium          # ~500 MB browser binary
 
 Once installed, `extraction_method: "playwright"` entries in the brand
 registry (Starbucks, KFC, Pizza Hut) run headless Chromium to render
-their store locators and parse the DOM. See `BRAND_SCRAPER_STATUS.md` for
+their store locators and parse the DOM. See `src/core/BRAND_SCRAPER_STATUS.md` for
 the per-brand status and selector-verification checklist.
 
 To hunt for hidden JSON endpoints behind a JS locator and skip the
 browser entirely, run `python src/scripts/discover_apis.py`.
+
+---
+
+## 4a. Brand Recognition
+
+The tool recognises 500+ Indian retail brands via a `brand_registry` table
+backed by a FAISS nearest-neighbour index over sentence-transformer
+embeddings. This solves the "multi-word brand names get misclassified as
+categories" problem — "Biryani By Kilo" stays a brand; it isn't read as a
+biryani category query.
+
+### How it works
+
+When a query arrives, the pipeline:
+
+1. Extracts candidate phrases (stopwords, city names, and single-word
+   category triggers like `pizza`/`coffee` are filtered out).
+2. First tries an exact substring / alias match against the registry —
+   fast path, confidence = high.
+3. Falls back to a FAISS cosine search over normalized embeddings, with a
+   token-overlap guardrail so `pizza` can't resolve to `Sbarro`.
+4. Routes based on thresholds:
+   - `score >= 0.92` → `confidence=high`, the NLU skips LLM brand
+     classification entirely.
+   - `score >= 0.75` → `confidence=ambiguous`, the hint is injected into
+     the Ollama system prompt as a note.
+   - Otherwise → `confidence=none`, the NLU runs as before.
+
+### Growing the registry
+
+The `brand_registry` table grows automatically:
+
+- **Category queries** ("all pizza stores in Delhi") upsert discovered
+  brand names with `source='discovered_category'`.
+- **Scraper runs** confirm a brand exists and mark it `verified=1` with
+  `source='discovered_scraper'`.
+- **Manual additions**: edit `src/scripts/build_seed_brands.py` to extend
+  the curated list, then re-run:
+
+  ```bash
+  python src/scripts/build_seed_brands.py   # writes data/brands_seed.csv
+  python src/scripts/load_brand_seed.py     # upserts into brand_registry
+  python src/scripts/rebuild_brand_index.py # rebuilds FAISS index
+  ```
+
+After 20+ new brands have accumulated since the last rebuild, the pipeline
+logs a reminder. Index rebuilds are explicit (never automatic at query
+time).
+
+### Dependencies
+
+Embedding-based resolution needs `sentence-transformers` and `faiss-cpu`
+(adds ~500MB including torch). Install the extra:
+
+```bash
+pip install 'location-intel[embeddings]'
+```
+
+Without these packages the resolver falls back to exact substring /
+alias matching against `brand_registry`. The pipeline still works; it's
+just less tolerant of misspellings.
+
+### Optional: HF_TOKEN for faster model downloads
+
+The first time the resolver runs it pulls
+`paraphrase-multilingual-MiniLM-L12-v2` (~500 MB) from the Hugging Face
+Hub and caches it under `~/.cache/huggingface/`. Subsequent runs load
+from disk and don't hit the Hub at all.
+
+Anonymous downloads work fine but are rate-limited and slower. If you
+rebuild the index often, pull new models, or share a public IP with
+heavy HF usage, add a free token:
+
+1. Create one at `https://huggingface.co/settings/tokens` (read scope).
+2. Add to `.env`:
+
+   ```
+   HF_TOKEN=hf_xxx
+   ```
+
+`sentence-transformers` / `huggingface_hub` pick it up automatically.
+The unauthenticated-hub warning is suppressed by default in
+`brand_resolver.py`, so it's purely a speed consideration.
 
 ---
 
@@ -161,7 +249,7 @@ make type
 
 **Adding a new brand to the registry**
 
-- Edit `KNOWN_BRANDS` in `src/nlu.py` for NL recognition.
+- Edit `KNOWN_BRANDS` in `src/core/nlu.py` for NL recognition.
 - Edit `BRAND_REGISTRY` in `src/fetchers/brand_scraper.py` with
   `store_locator_url`, `extraction_method`, `domain`, `last_verified`.
 - If `extraction_method` is `html`, the shared Ollama HTML-to-JSON parser
@@ -215,7 +303,7 @@ python -m src.tools.export_data --format csv --output /tmp/stores.csv
 - **Brand-scraper registry is 12 brands.** Anything outside the registry
   uses Google Places + OSM; the reconciler produces good output but
   addresses are less clean than a first-party source. See
-  [BRAND_SCRAPER_STATUS.md](BRAND_SCRAPER_STATUS.md) for per-brand status.
+  [src/core/BRAND_SCRAPER_STATUS.md](src/core/BRAND_SCRAPER_STATUS.md) for per-brand status.
 - **Playwright adds ~500 MB to the install footprint.** The `[playwright]`
   extra and `playwright install chromium` pull in a headless browser.
   Without it, JS-rendered brands fall through to Google Places.

@@ -19,17 +19,77 @@ from src.analysis.market_analysis import (
 from src.analysis.pincode_mapper import enrich_with_pincodes
 from src.analysis.reconciler import reconcile, reconciliation_report
 from src.analysis.sentiment import enrich_sentiment_from_ratings
-from src.core.cache_manager import (
+from src.caching.cache_manager import (
     estimate_brand_size,
     estimate_enrichment_needed,
     get_already_enriched_cities,
     smart_fetch,
     smart_fetch_with_enrichment,
 )
-from src.core.config import MAX_ENRICHMENT_CALLS_PER_QUERY, TIER_1_CITIES
-from src.nlu import parse_query
+from src.caching.config import MAX_ENRICHMENT_CALLS_PER_QUERY, TIER_1_CITIES
+from src.core.nlu import parse_query
 
 logger = logging.getLogger(__name__)
+
+REBUILD_INDEX_NAG_THRESHOLD = 20
+
+
+def _register_discovered_brands_from_category(
+    category_df: pd.DataFrame, category: str | None
+) -> None:
+    """
+    After a category fetch, upsert every distinct brand name into the registry
+    as an unverified discovered entry. Logs a reminder to rebuild the FAISS
+    index once the backlog crosses REBUILD_INDEX_NAG_THRESHOLD.
+    """
+    if category_df is None or category_df.empty or "brand" not in category_df.columns:
+        return
+    try:
+        from src.brand_resolver import INDEX_PATH
+        from src.caching.db import count_new_brands_since, upsert_brand_to_registry
+    except Exception as e:
+        logger.debug(f"registry writeback skipped: {e}")
+        return
+
+    for raw_name in category_df["brand"].dropna().unique():
+        name = str(raw_name).strip()
+        if not name or len(name) <= 2:
+            continue
+        try:
+            upsert_brand_to_registry(
+                canonical_name=name,
+                category=(category or None),
+                source="discovered_category",
+                verified=0,
+            )
+        except Exception as e:
+            logger.debug(f"upsert_brand_to_registry({name!r}) failed: {e}")
+
+    try:
+        cutoff = INDEX_PATH.stat().st_mtime if INDEX_PATH.exists() else 0.0
+        new_count = count_new_brands_since(cutoff)
+    except Exception:
+        return
+    if new_count >= REBUILD_INDEX_NAG_THRESHOLD:
+        logger.warning(
+            f"{new_count} new brands discovered since last index rebuild. "
+            f"Run `python src/scripts/rebuild_brand_index.py` to include them."
+        )
+
+
+def _mark_brand_verified_after_scrape(brand: str) -> None:
+    """Hook for the brand scraper to flag a brand as verified in the registry."""
+    if not brand:
+        return
+    try:
+        from src.caching.db import upsert_brand_to_registry
+        upsert_brand_to_registry(
+            canonical_name=brand,
+            source="discovered_scraper",
+            verified=1,
+        )
+    except Exception as e:
+        logger.debug(f"mark_brand_verified_after_scrape failed: {e}")
 
 
 def run_pipeline(
@@ -180,6 +240,9 @@ def run_pipeline(
                     raw_records_by_brand[brand_name] = raw_category[
                         raw_category["brand"] == brand_name
                     ].copy()
+                # Phase 5.4: feed discovered brands into brand_registry so the
+                # resolver learns about them on next index rebuild.
+                _register_discovered_brands_from_category(raw_category, category)
             brands = list(raw_records_by_brand.keys())
             combined_raw_list.append(raw_category)
 

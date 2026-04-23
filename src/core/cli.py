@@ -2,7 +2,7 @@
 Console-script launcher for the Streamlit UI.
 
 Invoke from outside an existing Streamlit Runtime via the `location-intel`
-console script installed by pyproject.toml, or `python -m src.cli`.
+console script installed by pyproject.toml, or `python -m src.core.cli`.
 """
 from __future__ import annotations
 

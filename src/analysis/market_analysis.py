@@ -174,46 +174,71 @@ def generate_ic_memo_points(
     whitespace_df: pd.DataFrame,
 ) -> list[str]:
     """
-    Generate bullet points for an IC memo.
-    These are the insights a PE analyst would write up.
+    Analytical observations for an IC memo.
+
+    Each bullet must state an interpretation, risk, or implication -- not a
+    number already in `density_df` / `whitespace_df`. If no analytical claim
+    is warranted for a given dimension, that dimension is skipped.
     """
-    points = []
+    points: list[str] = []
 
     if not density_df.empty:
-        top_city = density_df.iloc[0]
-        points.append(
-            f"Highest penetration in {top_city['city']} "
-            f"({top_city['stores_per_100k']:.1f} stores per 100K population, "
-            f"{int(top_city['store_count'])} stores)"
-        )
+        total_stores = float(density_df["store_count"].sum())
+        if total_stores > 0:
+            top_share = float(density_df.iloc[0]["store_count"]) / total_stores
+            if top_share >= 0.4:
+                points.append(
+                    f"Footprint concentration risk: {top_share * 100:.0f}% of "
+                    f"stores sit in {density_df.iloc[0]['city']}. Single-market "
+                    "shocks (rent, hiring, regulation) hit P&L disproportionately."
+                )
 
-        avg_rating = density_df["avg_rating"].mean()
-        if avg_rating >= 4.0:
-            points.append(
-                f"Strong customer satisfaction (avg {avg_rating:.1f}/5 across all markets), "
-                f"indicating healthy unit economics and brand loyalty"
-            )
-        elif avg_rating < 3.5:
-            points.append(
-                f"Customer satisfaction concern (avg {avg_rating:.1f}/5), "
-                f"suggesting operational issues that need resolution before expansion"
-            )
+        if "stores_per_100k" in density_df.columns and len(density_df) >= 3:
+            median_density = float(density_df["stores_per_100k"].median())
+            top_density = float(density_df.iloc[0]["stores_per_100k"])
+            if median_density > 0 and top_density / median_density >= 2.5:
+                points.append(
+                    f"{density_df.iloc[0]['city']} is saturated relative to the "
+                    f"rest of the network ({top_density:.1f} vs {median_density:.1f} "
+                    "median per 100K); incremental capex is better deployed in "
+                    "lower-density markets."
+                )
 
-    if not whitespace_df.empty:
-        high_opp = whitespace_df[whitespace_df["expansion_score"] >= 80]
-        if len(high_opp) > 0:
-            cities_list = ", ".join(high_opp["city"].head(5).tolist())
-            points.append(
-                f"{len(high_opp)} high-potential expansion markets identified: {cities_list}"
-            )
+        if "avg_rating" in density_df.columns:
+            ratings = density_df["avg_rating"].dropna()
+            if not ratings.empty:
+                avg_rating = float(ratings.mean())
+                if avg_rating >= 4.2:
+                    points.append(
+                        f"Brand equity supports premium pricing and new-market entry "
+                        f"(avg {avg_rating:.1f}/5); expansion thesis carries low "
+                        "demand-side risk."
+                    )
+                elif avg_rating < 3.5:
+                    points.append(
+                        f"Customer experience is a blocker before expansion "
+                        f"(avg {avg_rating:.1f}/5). Fix operations in the existing "
+                        "base before underwriting new stores."
+                    )
+                if len(ratings) >= 3:
+                    rating_spread = float(ratings.max() - ratings.min())
+                    if rating_spread >= 0.8:
+                        points.append(
+                            f"Execution quality varies by market (rating spread "
+                            f"{rating_spread:.1f}). Diligence should isolate whether "
+                            "weak markets are franchise/ops issues or trade-area mismatch."
+                        )
 
+    if not whitespace_df.empty and "current_stores" in whitespace_df.columns:
         zero_presence = whitespace_df[whitespace_df["current_stores"] == 0]
-        large_zero = zero_presence[zero_presence["population"] > 2_000_000]
-        if len(large_zero) > 0:
-            points.append(
-                f"Zero presence in {len(large_zero)} cities with 2M+ population, "
-                f"representing significant untapped market: "
-                f"{', '.join(large_zero['city'].tolist())}"
-            )
+        if "population" in zero_presence.columns:
+            large_zero = zero_presence[zero_presence["population"] > 2_000_000]
+            if len(large_zero) >= 2:
+                points.append(
+                    "Structural whitespace in multiple 2M+ population cities "
+                    f"({', '.join(large_zero['city'].head(5).tolist())}) suggests "
+                    "the brand is under-earning its TAM; absence is likely a "
+                    "distribution problem, not a demand problem."
+                )
 
     return points

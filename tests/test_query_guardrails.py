@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.core import cache_manager, config, db
+from src.caching import cache_manager, config, db
 
 
 def test_small_brand_under_threshold(temp_db, no_api_keys):
@@ -42,7 +42,7 @@ def test_enriched_stores_reduce_projection(temp_db, no_api_keys):
 def test_pipeline_blocks_large_queries(temp_db, no_api_keys, monkeypatch):
     db.upsert_brand_metadata("BlockBrand", 500, "manual", 1.0)
 
-    import src.pipeline as pl
+    import src.core.pipeline as pl
 
     monkeypatch.setattr(
         pl,
@@ -69,7 +69,7 @@ def test_pipeline_blocks_large_queries(temp_db, no_api_keys, monkeypatch):
 def test_pipeline_allows_single_city_query(temp_db, no_api_keys, monkeypatch):
     db.upsert_brand_metadata("BlockBrand", 500, "manual", 1.0)
 
-    import src.pipeline as pl
+    import src.core.pipeline as pl
 
     monkeypatch.setattr(
         pl,
@@ -98,7 +98,7 @@ def test_blocked_response_includes_already_enriched_cities(temp_db, no_api_keys,
         })
         db.mark_store_enriched(sid)
 
-    import src.pipeline as pl
+    import src.core.pipeline as pl
 
     monkeypatch.setattr(
         pl,

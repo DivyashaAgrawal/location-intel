@@ -127,7 +127,7 @@ def get_competitors(brand: str, max_n: int = 3) -> list[str]:
     discovered: list[str] = []
     if category:
         try:
-            from src.core import db as _db
+            from src.caching import db as _db
             rows = _db.get_discovered_competitors(category)
         except Exception:
             rows = []
@@ -258,46 +258,67 @@ def generate_competitor_memo_points(
     territory_df: pd.DataFrame,
     sov_df: pd.DataFrame,
 ) -> list[str]:
-    """One-line bullets describing the competitive picture for an IC deck."""
+    """
+    Analytical takeaways on the competitive picture. Each bullet states an
+    interpretation or implication, not a statistic already in the tables.
+    """
     points: list[str] = []
 
     if sov_df is not None and not sov_df.empty:
         focal_row = sov_df[sov_df["is_focal_brand"]]
-        if not focal_row.empty:
-            focal = focal_row.iloc[0]
-            points.append(
-                f"{focal_brand} holds {focal['share_of_voice_%']}% share of voice "
-                f"({int(focal['store_count'])} stores) across the mapped set."
-            )
         non_focal = sov_df[~sov_df["is_focal_brand"]]
-        if not non_focal.empty:
-            top_comp = non_focal.iloc[0]
-            points.append(
-                f"Leading competitor by footprint: {top_comp['brand']} with "
-                f"{int(top_comp['store_count'])} stores "
-                f"({top_comp['share_of_voice_%']}%)."
-            )
+        if not focal_row.empty and not non_focal.empty:
+            focal_sov = float(focal_row.iloc[0]["share_of_voice_%"])
+            top_comp_sov = float(non_focal.iloc[0]["share_of_voice_%"])
+            gap = focal_sov - top_comp_sov
+
+            if focal_sov >= 45:
+                points.append(
+                    f"{focal_brand} is the category anchor, not a challenger; "
+                    "pricing power and supplier terms should reflect that position."
+                )
+            elif gap >= 10:
+                points.append(
+                    f"{focal_brand} leads the mapped set, but the next competitor "
+                    f"({non_focal.iloc[0]['brand']}) is within striking distance "
+                    f"({gap:.0f}pp gap); defensive investment matters more than expansion."
+                )
+            elif gap <= -10:
+                points.append(
+                    f"{focal_brand} is the challenger to {non_focal.iloc[0]['brand']} "
+                    f"({-gap:.0f}pp behind on share of voice); thesis requires a "
+                    "credible route to catch up, not just organic growth."
+                )
+            else:
+                points.append(
+                    "Market is fragmented at the top (no brand holds a decisive "
+                    "share lead); share gains come from execution, not positioning."
+                )
 
     if territory_df is not None and not territory_df.empty:
         defensible = int((territory_df["territory"] == "Defensible territory").sum())
         contested = int((territory_df["territory"] == "Contested").sum())
         whitespace = int((territory_df["territory"] == "Competitor whitespace").sum())
+        total = defensible + contested + whitespace
 
-        if defensible:
-            points.append(
-                f"{defensible} pincode(s) where {focal_brand} is the only player "
-                "in the mapped set -- defensible territory."
-            )
-        if contested:
-            points.append(
-                f"{contested} contested pincode(s) where both {focal_brand} and "
-                "at least one competitor operate."
-            )
-        if whitespace:
-            points.append(
-                f"{whitespace} competitor-whitespace pincode(s) where a rival is "
-                f"present but {focal_brand} is not -- expansion candidates."
-            )
+        if total > 0:
+            if contested / total >= 0.5:
+                points.append(
+                    "Majority of pincodes are contested; margin compression from "
+                    "discounting and co-location is the default state, not an exception."
+                )
+            if defensible >= 3 * max(whitespace, 1) and defensible >= 3:
+                points.append(
+                    f"{focal_brand} has a real geographic moat -- defensible "
+                    "pincodes far outnumber competitor whitespace. Protect these "
+                    "before chasing new markets."
+                )
+            if whitespace >= 2 * max(defensible, 1) and whitespace >= 3:
+                points.append(
+                    f"Competitors have built ahead of {focal_brand} in more "
+                    "pincodes than the reverse; any expansion thesis needs to "
+                    "acknowledge this is a catch-up investment, not greenfield."
+                )
 
     return points
 
@@ -335,7 +356,7 @@ def run_competitor_analysis(
     tentative_flags: dict[str, bool] = {}
     if category:
         try:
-            from src.core import db as _db
+            from src.caching import db as _db
             rows = _db.get_discovered_competitors(category)
         except Exception:
             rows = []

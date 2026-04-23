@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.core import cache_manager, db
+from src.caching import cache_manager, db
 from src.fetchers import brand_scraper, brand_scraper_js
 
 

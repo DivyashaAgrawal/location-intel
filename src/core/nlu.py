@@ -5,7 +5,7 @@ import logging
 
 import requests as http_requests
 
-from src.core.config import OLLAMA_BASE_URL, OLLAMA_MODEL
+from src.caching.config import OLLAMA_BASE_URL, OLLAMA_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,10 @@ Input: "summary of dominos vs pizzahut in delhi"
 Output: {"query_type":"brand","brands":["Dominos Pizza","Pizza Hut"],"category":null,"search_query":"Dominos Pizza","geography":{"level":"city","filter":["Delhi"]},"metrics":["store_count","avg_rating","review_count","sentiment_summary"],"comparison":true}
 """
 
+# NOTE: Primary brand recognition is now handled by src.brand_resolver (FAISS +
+# embeddings over the brand_registry table). This dict is a secondary fallback
+# used only by parse_query_fallback when Ollama is down AND the resolver either
+# failed or returned no match. Prefer adding new brands to data/brands_seed.csv.
 KNOWN_BRANDS = {
     "dominos": "Dominos Pizza",
     "domino's": "Dominos Pizza",
@@ -183,19 +187,35 @@ METRIC_KEYWORDS = {
 }
 
 
-def parse_query_with_ollama(query: str) -> dict:
+def _build_prompt(query: str, brand_hint: dict | None = None) -> str:
+    """Assemble the LLM prompt. Ambiguous brand hints get injected as a note."""
+    prompt = SYSTEM_PROMPT
+    if brand_hint and brand_hint.get("confidence") == "ambiguous":
+        phrase = brand_hint.get("candidate_phrase") or ""
+        canonical = brand_hint.get("canonical_brand") or ""
+        prompt += (
+            f"\n\nNOTE: The phrase '{phrase}' in the user's query might refer "
+            f"to the brand '{canonical}'. If that interpretation fits the query, "
+            f"set query_type='brand' and brands=['{canonical}']. Otherwise treat "
+            f"it as a category query."
+        )
+    return prompt
+
+
+def parse_query_with_ollama(query: str, brand_hint: dict | None = None) -> dict:
     """Use local Ollama (llama3.2 3B) to parse the query."""
     raw = ""
+    prompt = _build_prompt(query, brand_hint=brand_hint)
     try:
         response = http_requests.post(
             f"{OLLAMA_BASE_URL}/api/generate",
             json={
                 "model": OLLAMA_MODEL,
-                "prompt": f"{SYSTEM_PROMPT}\n\nInput: {query}\nOutput:",
+                "prompt": f"{prompt}\n\nInput: {query}\nOutput:",
                 "stream": False,
                 "options": {
-                    "temperature": 0.1,  # low temp for deterministic parsing
-                    "num_predict": 300,
+                    "temperature": 0.2,  # low temp for deterministic parsing
+                    "num_predict": 500,
                 },
             },
             timeout=30,
@@ -234,6 +254,28 @@ def parse_query_with_ollama(query: str) -> dict:
         raise RuntimeError("Ollama not running. Start with: ollama serve")
     except json.JSONDecodeError as e:
         raise ValueError(f"LLM returned invalid JSON: {e}\nRaw: {raw[:200]}")
+
+
+def parse_with_predetermined_brand(query: str, canonical_brand: str) -> dict:
+    """
+    Shortcut parser for when the resolver has given us a high-confidence brand
+    hit. We still extract geography / metrics / pincode-vs-city level but skip
+    LLM brand classification entirely. Rule-based and fast; we only fall back
+    to the LLM if explicitly needed.
+
+    This avoids the known failure mode where the 3B Ollama model mislabels
+    multi-word brand names (e.g. "Biryani By Kilo") as category queries.
+    """
+    base = parse_query_fallback(query)
+    base["query_type"] = "brand"
+    base["category"] = None
+    base["search_query"] = canonical_brand
+
+    existing = [b for b in base.get("brands", []) if b and b != canonical_brand]
+    brands = [canonical_brand] + existing
+    base["brands"] = brands
+    base["comparison"] = len(brands) > 1 or base.get("comparison", False)
+    return base
 
 
 def parse_query_fallback(query: str) -> dict:
@@ -284,7 +326,7 @@ def parse_query_fallback(query: str) -> dict:
             geo_level = level
             break
 
-    from src.core.config import INDIA_MAJOR_CITIES
+    from src.caching.config import INDIA_MAJOR_CITIES
 
     geo_filter = []
     for city in INDIA_MAJOR_CITIES:
@@ -322,13 +364,81 @@ def parse_query_fallback(query: str) -> dict:
     }
 
 
-def parse_query(query: str) -> dict:
-    """
-    Parse a natural language query.
-    Priority: Ollama (local, free) -> rule-based fallback.
-    """
+def _resolve_brand_hint(query: str) -> dict | None:
+    """Try the brand resolver; swallow errors so the pipeline stays up."""
     try:
-        result = parse_query_with_ollama(query)
+        from src.brand_resolver import resolve_query as _resolve
+        return _resolve(query)
+    except Exception as e:
+        logger.warning(f"brand resolver failed: {e}")
+        return None
+
+
+def _extract_comparison_brands(query: str) -> list[str]:
+    """
+    For comparison queries ("X vs Y"), resolve both sides. The resolver only
+    returns one canonical brand per call, so we split on vs/versus/compare
+    and resolve each chunk separately.
+    """
+    import re
+    try:
+        from src.brand_resolver import resolve_query as _resolve
+    except Exception:
+        return []
+
+    q = query.lower()
+    if not any(kw in q for kw in [" vs ", " versus ", "compare"]):
+        return []
+
+    parts = re.split(r"\s+(?:vs|versus)\s+|compare\s+", query, flags=re.IGNORECASE)
+    seen: set[str] = set()
+    brands: list[str] = []
+    for part in parts:
+        if not part or not part.strip():
+            continue
+        r = _resolve(part)
+        if r.get("confidence") == "high" and r.get("canonical_brand"):
+            name = r["canonical_brand"]
+            if name.lower() not in seen:
+                seen.add(name.lower())
+                brands.append(name)
+    return brands
+
+
+def parse_query(query: str, brand_hint: dict | None = None) -> dict:
+    """
+    Parse a natural language query into structured parameters.
+
+    Flow:
+      1. If ``brand_hint`` is missing, ask the brand resolver.
+      2. high-confidence hint -> deterministic parse (skip LLM brand step).
+      3. ambiguous hint -> LLM call with a note injected into the prompt.
+      4. no match -> standard LLM -> rule-based fallback.
+    """
+    if brand_hint is None:
+        brand_hint = _resolve_brand_hint(query)
+
+    if brand_hint and brand_hint.get("confidence") == "high":
+        canonical = brand_hint.get("canonical_brand")
+        if canonical:
+            parsed = parse_with_predetermined_brand(query, canonical)
+            extra = _extract_comparison_brands(query)
+            for b in extra:
+                if b not in parsed["brands"]:
+                    parsed["brands"].append(b)
+            if len(parsed["brands"]) > 1:
+                parsed["comparison"] = True
+            logger.info(f"[NLU: resolver-high] {canonical}")
+            try:
+                from src.caching.db import increment_brand_queried
+                for b in parsed["brands"]:
+                    increment_brand_queried(b)
+            except Exception as e:
+                logger.debug(f"increment_brand_queried failed: {e}")
+            return parsed
+
+    try:
+        result = parse_query_with_ollama(query, brand_hint=brand_hint)
         return result
     except RuntimeError as e:
         logger.warning(f"  Ollama unavailable ({e}), using rule-based parser")

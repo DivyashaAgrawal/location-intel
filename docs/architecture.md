@@ -15,7 +15,8 @@ tables and memo points.
 
 ```mermaid
 flowchart LR
-    U[User query] --> N[NLU - Ollama + fallback]
+    U[User query] --> BR[Brand Resolver<br/>registry + FAISS]
+    BR --> N[NLU - Ollama + fallback]
     N --> BSE{Brand size<br/>estimate}
     BSE -->|projected > 100 calls| BLOCK[Blocked:<br/>suggest city query]
     BSE -->|within threshold| CM[Cache Manager]
@@ -50,6 +51,52 @@ Key rules baked into the flow:
   projects the enrichment cost using the brand-size estimate from
   `brand_metadata`. Anything above `MAX_ENRICHMENT_CALLS_PER_QUERY` (100)
   is blocked with a city-level suggestion instead.
+
+## Brand resolution layer
+
+The brand resolver sits between the user query and the NLU. Its single job:
+answer "does this query mention a known brand, and if so, which one?"
+Without it, the 3B Ollama model mislabels multi-word brand names like
+"Biryani By Kilo" as category queries because it only recognises the lead
+token ("biryani").
+
+**Inputs.** The `brand_registry` table (~500 seeded + growing) holds
+canonical names, aliases, and categories. A FAISS `IndexFlatIP` built from
+`paraphrase-multilingual-MiniLM-L12-v2` embeddings of
+`canonical_name + aliases + category` text is kept on disk at
+`data/brand_index.faiss` plus a JSON metadata file for the `brand_id` -> row
+index mapping.
+
+**Resolution algorithm.**
+
+1. Substring / alias lookup against the registry, with word-boundary
+   checks. A hit gets `confidence=high` and skips the LLM entirely. This
+   handles the common case (analyst typed the canonical name or a known
+   alias like `BBK`).
+2. Candidate extraction: the query is split into n-grams of length 1..4
+   after stripping stopwords, geography names, and single-word category
+   triggers (`pizza`, `coffee`, `biryani` — these would over-match against
+   specific brands otherwise).
+3. FAISS k-NN search for each candidate. The best result that shares at
+   least one significant token with its canonical name wins; the
+   token-overlap guardrail stops noise matches like "pizza" -> "Sbarro".
+4. Thresholds: `>=0.92` high-confidence, `>=0.75` ambiguous (passed as a
+   hint into the Ollama prompt), otherwise none.
+
+**Growth mechanisms.**
+
+- Category queries ("all pizza stores in Delhi") upsert every distinct
+  brand name from the results into `brand_registry` with
+  `source='discovered_category'`, verified=0.
+- Brand scraper runs mark their target as `verified=1`,
+  `source='discovered_scraper'`.
+- After ~20 new additions, the pipeline logs a reminder to run
+  `python src/scripts/rebuild_brand_index.py`. Rebuilds are never
+  automatic — they'd add unacceptable latency to query-time.
+
+**Graceful degradation.** If `sentence-transformers` or `faiss` are not
+installed (the `[embeddings]` extra), `resolve_query` falls back to the
+substring path transparently. Callers see the same return shape.
 
 ## Lazy enrichment pattern
 
@@ -91,7 +138,7 @@ as noise) or the `src/scripts/review_competitors.py` CLI.
 
 ## 2. Persistent DB schema
 
-`src/core/db.py` owns five tables in a single SQLite file. Stores
+`src/caching/db.py` owns the tables in a single SQLite file. Stores
 are normalised (one row per physical location across sources); rating
 snapshots are append-only so price/rating history can be derived later.
 `query_cache` maps a `(brand, city)` lookup to a list of `store_ids` so a

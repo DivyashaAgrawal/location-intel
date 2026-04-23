@@ -1,0 +1,6 @@
+[server]
+# Stop Streamlit's hot-reload watcher from walking venv-installed packages.
+# Without this, it lazily imports every submodule it finds in sys.modules,
+# which triggers ModuleNotFoundError tracebacks for optional transformers
+# extras we don't actually use (e.g. zoedepth requires torchvision).
+folderWatchBlacklist = ["./venv", "./.venv"]

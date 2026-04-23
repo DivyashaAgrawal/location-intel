@@ -12,8 +12,8 @@ import logging
 import sys
 import time
 
-from src.core.cache_manager import estimate_brand_size
-from src.core.db import init_db
+from src.caching.cache_manager import estimate_brand_size
+from src.caching.db import init_db
 from src.fetchers.brand_scraper import BRAND_REGISTRY
 
 logger = logging.getLogger(__name__)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.core import db
+from src.caching import db
 
 
 def test_migration_adds_columns_on_existing_db(temp_db):

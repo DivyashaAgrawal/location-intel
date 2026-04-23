@@ -32,7 +32,7 @@ try:
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
-    sync_playwright = None
+    sync_playwright = None  # type: ignore[assignment]
 
     class PWTimeoutError(Exception):  # type: ignore[no-redef]
         pass

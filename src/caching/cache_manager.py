@@ -22,7 +22,7 @@ from collections.abc import Callable
 
 import pandas as pd
 
-from src.core import config, db, redis_cache
+from src.caching import config, db, redis_cache
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +174,7 @@ def smart_fetch(
     if live_fetcher is None or reconciler is None:
         from src.analysis import reconciler as _rec
         from src.fetchers import multi_fetcher
+        
         live_fetcher = live_fetcher or (lambda b, c: multi_fetcher.fetch_multi_source(b, [c]))
         reconciler = reconciler or _rec.reconcile
 
@@ -291,7 +292,7 @@ def smart_fetch_with_enrichment(
 
     _stage2_enrich_cities(brand, cities, metadata)
 
-    from src.core import db as _db
+    from src.caching import db as _db
     metadata["total_stores_in_db"] = _db.count_enriched_stores_for_brand(brand)
 
     df = _fetch_brand_city_rows(brand, cities)
@@ -303,7 +304,7 @@ def _stage1_national_scrape(brand: str, metadata: dict) -> None:
 
     Skipped if a recent full_scrape_completed_at exists in brand_metadata.
     """
-    from src.core import db as _db
+    from src.caching import db as _db
 
     meta = _db.get_brand_metadata(brand)
     ts = meta.get("full_scrape_completed_at") if meta else None
@@ -347,13 +348,25 @@ def _stage1_national_scrape(brand: str, metadata: dict) -> None:
         full_scrape_completed_at=_time_now(),
     )
 
+    # Phase 5.4: a successful scrape confirms the brand exists. Mark it
+    # verified in brand_registry so the resolver's next rebuild treats it
+    # as a known, high-trust brand.
+    try:
+        _db.upsert_brand_to_registry(
+            canonical_name=brand,
+            source="discovered_scraper",
+            verified=1,
+        )
+    except Exception as e:
+        logger.debug("registry verify after scrape failed: %s", e)
+
 
 def _stage2_enrich_cities(brand: str, cities: list[str], metadata: dict) -> None:
     """Google Places enrichment for stores in `cities` that aren't fresh."""
     if not cities:
         return
 
-    from src.core import db as _db
+    from src.caching import db as _db
     from src.fetchers import google_places
 
     if not config.GOOGLE_PLACES_API_KEY:
@@ -390,7 +403,7 @@ def _stage2_enrich_cities(brand: str, cities: list[str], metadata: dict) -> None
 
 def _fetch_brand_city_rows(brand: str, cities: list[str]) -> pd.DataFrame:
     """Pull stores from the DB for `brand` in `cities`, joined to latest rating."""
-    from src.core import db as _db
+    from src.caching import db as _db
 
     if not cities:
         return pd.DataFrame()
@@ -439,7 +452,7 @@ def estimate_enrichment_needed(brand: str, cities: list[str]) -> int:
       - Stores already enriched and still fresh (inside ENRICHMENT_TTL_SEC)
         don't count as projected calls.
     """
-    from src.core import db as _db
+    from src.caching import db as _db
 
     size = estimate_brand_size(brand)
     total = size.get("total_stores_estimate") or 0
@@ -459,7 +472,7 @@ def estimate_enrichment_needed(brand: str, cities: list[str]) -> int:
 
 def get_already_enriched_cities(brand: str) -> list[dict]:
     """Return [{city, store_count}] for cities with any enriched stores."""
-    from src.core import db as _db
+    from src.caching import db as _db
 
     conn = _db._get_conn()
     try:
@@ -619,7 +632,7 @@ def _estimate_via_places_pagination(brand: str) -> tuple[int | None, bool]:
     pages_seen = 0
     hit_cap = False
 
-    for city in ("Delhi", "Mumbai", "Bangalore"):
+    for city in ("Delhi", "Mumbai", "Bangalore"): # why blocking cities here?
         try:
             records = google_places.search_text(brand, city, max_pages=3)
         except Exception as e:
