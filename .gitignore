@@ -13,8 +13,6 @@ build/
 venv/
 
 # Caches / coverage
-location_intel.db
-src/location_intel.db
 .coverage
 .pytest_cache/
 .mypy_cache/

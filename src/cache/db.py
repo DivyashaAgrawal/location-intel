@@ -22,9 +22,10 @@ from typing import Any
 
 import pandas as pd
 
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_DB_PATH = os.environ.get(
     "LOCATION_INTEL_DB_PATH",
-    os.path.join(os.path.dirname(os.path.dirname(__file__)), "location_intel.db"),
+    os.path.join(_PROJECT_ROOT, "data", "location_intel.db"),
 )
 
 QUERY_TTL_DEFAULT = 24 * 3600  # 1 day
@@ -143,6 +144,9 @@ CREATE INDEX IF NOT EXISTS idx_brand_name_lower ON brand_registry(LOWER(canonica
 
 def _get_conn(db_path: str | None = None) -> sqlite3.Connection:
     path = db_path or DEFAULT_DB_PATH
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
