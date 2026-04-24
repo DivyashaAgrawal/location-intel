@@ -32,3 +32,8 @@ logs/
 *~
 .claude/
 .vscode/
+
+# SQLite transient files
+*.db-journal
+*.db-wal
+*.db-shm
