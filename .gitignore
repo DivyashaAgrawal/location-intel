@@ -37,3 +37,8 @@ logs/
 *.db-journal
 *.db-wal
 *.db-shm
+
+# SQLite transient files
+*.db-journal
+*.db-wal
+*.db-shm
