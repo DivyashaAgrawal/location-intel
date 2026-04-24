@@ -24,6 +24,7 @@ htmlcov/
 # Data + logs directories (Dockerfile mounts these)
 data/
 logs/
+docs/location_intelligence*
 
 # OS / editor junk
 .DS_Store
