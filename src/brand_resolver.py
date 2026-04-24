@@ -379,6 +379,10 @@ def resolve_query(raw_query: str, db_path: str | None = None) -> dict[str, Any]:
     all_matches.sort(key=lambda x: x[1], reverse=True)
 
     # Pick the best match that passes the token-overlap guardrail.
+    # The guardrail requires the matched phrase to share at least one token
+    # with the canonical name. If nothing passes, the query likely refers to
+    # a brand not yet in the index — return empty so Ollama / the rule-based
+    # fallback can handle it rather than confidently returning the wrong brand.
     best: tuple[str, float, dict[str, Any]] | None = None
     for phrase, score, meta in all_matches:
         canonical = meta.get("canonical_name") or ""
@@ -386,7 +390,7 @@ def resolve_query(raw_query: str, db_path: str | None = None) -> dict[str, Any]:
             best = (phrase, score, meta)
             break
     if best is None:
-        best = all_matches[0]
+        return _empty_result()
 
     phrase, score, brand_meta = best
     canonical = brand_meta.get("canonical_name")

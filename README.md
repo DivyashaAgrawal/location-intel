@@ -131,7 +131,7 @@ browser entirely, run `python src/scripts/discover_apis.py`.
 ## 4a. Brand Recognition
 
 The tool recognises 500+ Indian retail brands via a `brand_registry` table
-backed by a FAISS nearest-neighbour index over sentence-transformer
+backed by a FAISS(Facebook AI Similarity Search) nearest-neighbour index over sentence-transformer
 embeddings. This solves the "multi-word brand names get misclassified as
 categories" problem — "Biryani By Kilo" stays a brand; it isn't read as a
 biryani category query.
