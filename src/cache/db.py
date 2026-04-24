@@ -161,10 +161,16 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
 
 
 def init_db(db_path: str | None = None) -> None:
-    """Create tables and indexes if they don't exist. Safe to call repeatedly."""
+    """Create tables and indexes. Evicts expired cache rows. Safe to call repeatedly."""
     conn = _get_conn(db_path)
-    conn.commit()
-    conn.close()
+    try:
+        cutoff_query = time.time() - QUERY_TTL_DEFAULT
+        conn.execute("DELETE FROM query_cache WHERE fetched_at < ?", (cutoff_query,))
+        cutoff_source = time.time() - (30 * 24 * 3600)
+        conn.execute("DELETE FROM source_cache WHERE fetched_at < ?", (cutoff_source,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +215,7 @@ _STORE_COLS = [
     "enriched_at", "enrichment_source",
 ]
 
-ENRICHMENT_TTL_SEC = 7 * 24 * 3600  # 7 days: RATING_TTL
+ENRICHMENT_TTL_SEC = 7 * 24 * 3600  # freshness window for Google Places enrichment
 
 
 def upsert_store(record: dict, db_path: str | None = None) -> str:
@@ -260,10 +266,49 @@ def upsert_store(record: dict, db_path: str | None = None) -> str:
 
 def upsert_stores(records: Iterable[dict], db_path: str | None = None) -> list[str]:
     """Bulk upsert. Returns the list of store_ids written, preserving input order."""
-    ids = []
-    for r in records:
-        ids.append(upsert_store(r, db_path=db_path))
-    return ids
+    records = list(records)
+    if not records:
+        return []
+    conn = _get_conn(db_path)
+    try:
+        ids = []
+        for r in records:
+            sid = r.get("store_id") or compute_store_id(
+                place_id=r.get("place_id"),
+                brand=r.get("brand"),
+                latitude=r.get("latitude"),
+                longitude=r.get("longitude"),
+            )
+            row = {c: r.get(c) for c in _STORE_COLS}
+            row["store_id"] = sid
+            row["last_updated"] = time.time()
+
+            placeholders = ", ".join(["?"] * (len(_STORE_COLS) + 1))
+            columns = ", ".join(_STORE_COLS + ["last_updated"])
+            updates = ", ".join(
+                f"{c}=excluded.{c}" for c in _STORE_COLS + ["last_updated"] if c != "store_id"
+            )
+            conn.execute(
+                f"""
+                INSERT INTO stores ({columns}) VALUES ({placeholders})
+                ON CONFLICT(store_id) DO UPDATE SET {updates}
+                """,
+                [row[c] for c in _STORE_COLS] + [row["last_updated"]],
+            )
+
+            rating = r.get("rating")
+            review_count = r.get("review_count")
+            if rating is not None or review_count is not None:
+                conn.execute(
+                    "INSERT INTO store_ratings (store_id, rating, review_count, fetched_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (sid, rating, review_count, time.time()),
+                )
+            ids.append(sid)
+        conn.commit()
+        return ids
+    finally:
+        conn.close()
 
 
 def get_stores_by_ids(
@@ -296,6 +341,54 @@ def get_stores_by_ids(
         return pd.DataFrame([dict(r) for r in rows])
     finally:
         conn.close()
+
+
+def get_stores_for_brand_cities(
+    brand: str, cities: list[str], db_path: str | None = None
+) -> pd.DataFrame:
+    """Fetch stores for brand in cities, joined to latest rating. Used by cache_manager."""
+    if not cities:
+        return pd.DataFrame()
+    conn = _get_conn(db_path)
+    try:
+        placeholders = ",".join("?" * len(cities))
+        rows = conn.execute(
+            f"""
+            SELECT s.*,
+                   r.rating        AS rating,
+                   r.review_count  AS review_count,
+                   r.fetched_at    AS rating_fetched_at
+            FROM stores s
+            LEFT JOIN (
+                SELECT store_id, rating, review_count, fetched_at
+                FROM store_ratings
+                WHERE id IN (SELECT MAX(id) FROM store_ratings GROUP BY store_id)
+            ) r ON r.store_id = s.store_id
+            WHERE s.brand = ? AND s.city IN ({placeholders})
+            """,
+            [brand] + list(cities),
+        ).fetchall()
+    finally:
+        conn.close()
+    return pd.DataFrame([dict(r) for r in rows])
+
+
+def get_enriched_cities_for_brand(brand: str, db_path: str | None = None) -> list[dict]:
+    """Return [{city, store_count}] for cities with any enriched stores."""
+    conn = _get_conn(db_path)
+    try:
+        rows = conn.execute(
+            """
+            SELECT city, COUNT(*) AS n FROM stores
+            WHERE brand = ? AND enriched_at IS NOT NULL AND city IS NOT NULL
+            GROUP BY city
+            ORDER BY n DESC
+            """,
+            (brand,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [{"city": r["city"], "store_count": int(r["n"])} for r in rows]
 
 
 # ---------------------------------------------------------------------------

@@ -50,8 +50,8 @@ def build_index(
         )
         raise
 
-    from src.brand_resolver import EMBEDDING_MODEL
-    from src.caching import db as _db
+    from src.cache import db as _db
+    from src.nlu.brand_resolver import EMBEDDING_MODEL
 
     brands = _db.list_all_brands_in_registry(db_path=db_path)
     if not brands:

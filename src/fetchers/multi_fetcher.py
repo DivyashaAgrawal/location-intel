@@ -19,7 +19,7 @@ import time
 
 import pandas as pd
 
-from src.caching import cache_manager
+from src.cache import manager as cache_manager
 from src.fetchers import brand_scraper, google_places, osm, serper
 from src.fetchers._common import extract_pincode
 
@@ -103,7 +103,7 @@ def _record_discovered_brands_for_category(records: list[dict], category: str) -
         return
     try:
         from src.analysis.competitor import BRAND_CATEGORY
-        from src.caching import db as _db
+        from src.cache import db as _db
     except Exception:
         return
 

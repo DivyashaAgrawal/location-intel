@@ -12,7 +12,7 @@ import pytest
 @pytest.fixture
 def no_ollama(monkeypatch):
     """Force parse_query_with_ollama to raise so parse_query takes the fallback path."""
-    from src.core import nlu
+    from src.nlu import parser as nlu
 
     def _raise(*args, **kwargs):
         raise RuntimeError("Ollama disabled for test")
@@ -23,7 +23,7 @@ def no_ollama(monkeypatch):
 
 def test_high_confidence_hint_bypasses_llm():
     """With a high-confidence hint we never need to call Ollama."""
-    from src.core.nlu import parse_query
+    from src.nlu.parser import parse_query
     hint = {
         "confidence": "high",
         "canonical_brand": "Biryani By Kilo",
@@ -37,7 +37,7 @@ def test_high_confidence_hint_bypasses_llm():
 
 
 def test_high_confidence_hint_respects_pincode_level():
-    from src.core.nlu import parse_query
+    from src.nlu.parser import parse_query
     hint = {"confidence": "high", "canonical_brand": "Starbucks"}
     r = parse_query("pincode wise starbucks in delhi", brand_hint=hint)
     assert r["query_type"] == "brand"
@@ -48,7 +48,7 @@ def test_high_confidence_hint_respects_pincode_level():
 
 def test_none_confidence_falls_through_to_normal_parsing(no_ollama):
     """No-hint queries should behave like the pre-resolver NLU."""
-    from src.core.nlu import parse_query
+    from src.nlu.parser import parse_query
     r = parse_query(
         "biryani restaurants in delhi",
         brand_hint={"confidence": "none"},
@@ -60,7 +60,7 @@ def test_none_confidence_falls_through_to_normal_parsing(no_ollama):
 
 def test_hint_canonical_wins_over_fallback_brand_list(no_ollama):
     """If the hint says it's a specific brand, fallback shouldn't relabel it."""
-    from src.core.nlu import parse_query
+    from src.nlu.parser import parse_query
     # Fallback KNOWN_BRANDS doesn't include "Biryani By Kilo"; without the
     # hint the fallback would classify this as category.
     r = parse_query(
@@ -76,7 +76,7 @@ def test_hint_canonical_wins_over_fallback_brand_list(no_ollama):
 
 def test_ambiguous_hint_lets_llm_decide(no_ollama):
     """Ambiguous hints should leave query_type open (here: falls to rule-based)."""
-    from src.core.nlu import parse_query
+    from src.nlu.parser import parse_query
     r = parse_query(
         "random thing",
         brand_hint={
@@ -91,7 +91,7 @@ def test_ambiguous_hint_lets_llm_decide(no_ollama):
 
 
 def test_parse_with_predetermined_brand_preserves_metrics():
-    from src.core.nlu import parse_with_predetermined_brand
+    from src.nlu.parser import parse_with_predetermined_brand
     r = parse_with_predetermined_brand(
         "starbucks summary in mumbai", "Starbucks"
     )
@@ -104,7 +104,7 @@ def test_parse_with_predetermined_brand_preserves_metrics():
 
 def test_comparison_brands_merged_by_hint_path(temp_db):
     """The high-confidence path should also pull additional brands from 'vs' clauses."""
-    from src.caching import db as _db
+    from src.cache import db as _db
     _db.upsert_brand_to_registry(
         canonical_name="Biryani By Kilo",
         aliases=["BBK"],
@@ -118,10 +118,10 @@ def test_comparison_brands_merged_by_hint_path(temp_db):
         source="seed",
     )
     # Reset cached model/index so the resolver sees the fresh DB.
-    import src.brand_resolver as br
+    import src.nlu.brand_resolver as br
     br.reset_caches()
 
-    from src.core.nlu import parse_query
+    from src.nlu.parser import parse_query
     r = parse_query("Biryani By Kilo vs Behrouz Biryani in Mumbai")
     assert r["query_type"] == "brand"
     assert set(r["brands"]) == {"Biryani By Kilo", "Behrouz Biryani"}

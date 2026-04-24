@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "location-intel"
-version = "0.0.1"
+version = "0.2.1"
 description = "Natural-language location intelligence."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -53,7 +53,7 @@ embeddings = [
 ]
 
 [project.scripts]
-location-intel = "src.core.cli:main"
+location-intel = "src.cli:main"
 warm-cache = "src.tools.warm_cache:main"
 export-data = "src.tools.export_data:main"
 

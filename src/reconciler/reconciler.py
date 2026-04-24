@@ -167,6 +167,7 @@ def reconcile_sources(
     maps_df: pd.DataFrame,
     website_df: pd.DataFrame,
     brand: str,
+    maps_source: str = "serper",
 ) -> pd.DataFrame:
     """
     Reconcile store data from Google Maps and a brand's website.
@@ -180,7 +181,7 @@ def reconcile_sources(
 
     if not maps.empty:
         if "source" not in maps.columns:
-            maps["source"] = "serper"
+            maps["source"] = maps_source
         if "confidence" not in maps.columns:
             maps["confidence"] = 0.9
 

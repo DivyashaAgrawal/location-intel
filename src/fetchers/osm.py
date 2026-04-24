@@ -11,7 +11,7 @@ import re
 
 import requests
 
-from src.caching.config import INDIA_MAJOR_CITIES, NOMINATIM_USER_AGENT
+from src.config.settings import INDIA_MAJOR_CITIES, NOMINATIM_USER_AGENT
 from src.fetchers._common import extract_brand_from_title
 
 logger = logging.getLogger(__name__)

@@ -228,7 +228,7 @@ def _find_substring_match(
     raw_query: str, db_path: str | None = None
 ) -> tuple[str, str] | None:
     """Return (matched_phrase_lower, canonical_name) for the longest exact match."""
-    from src.caching import db as _db
+    from src.cache import db as _db
 
     raw_lower = raw_query.lower()
     try:

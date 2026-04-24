@@ -17,17 +17,12 @@ from src.analysis.market_analysis import (
     whitespace_analysis,
 )
 from src.analysis.pincode_mapper import enrich_with_pincodes
-from src.analysis.reconciler import reconcile, reconciliation_report
 from src.analysis.sentiment import enrich_sentiment_from_ratings
-from src.caching.cache_manager import (
-    estimate_brand_size,
-    estimate_enrichment_needed,
-    get_already_enriched_cities,
-    smart_fetch,
-    smart_fetch_with_enrichment,
-)
-from src.caching.config import MAX_ENRICHMENT_CALLS_PER_QUERY, TIER_1_CITIES
-from src.core.nlu import parse_query
+from src.cache.manager import smart_fetch, smart_fetch_with_enrichment
+from src.nlu.brand_size import estimate_brand_size
+from src.nlu.guardrails import build_blocked_response, check_query_budget
+from src.nlu.parser import parse_query
+from src.reconciler.reconciler import reconcile, reconciliation_report
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +40,10 @@ def _register_discovered_brands_from_category(
     if category_df is None or category_df.empty or "brand" not in category_df.columns:
         return
     try:
-        from src.brand_resolver import INDEX_PATH
-        from src.caching.db import count_new_brands_since, upsert_brand_to_registry
+        from src.cache.db import count_new_brands_since, upsert_brand_to_registry
+        from src.nlu.brand_resolver import INDEX_PATH
     except Exception as e:
-        logger.debug(f"registry writeback skipped: {e}")
+        logger.debug("registry writeback skipped: %s", e)
         return
 
     for raw_name in category_df["brand"].dropna().unique():
@@ -63,17 +58,24 @@ def _register_discovered_brands_from_category(
                 verified=0,
             )
         except Exception as e:
-            logger.debug(f"upsert_brand_to_registry({name!r}) failed: {e}")
+            logger.debug("upsert_brand_to_registry(%r) failed: %s", name, e)
 
     try:
-        cutoff = INDEX_PATH.stat().st_mtime if INDEX_PATH.exists() else 0.0
+        if not INDEX_PATH.exists():
+            logger.warning(
+                "Brand index has not been built yet. "
+                "Run `python src/maintenance/rebuild_brand_index.py` to enable embedding-based resolution."
+            )
+            return
+        cutoff = INDEX_PATH.stat().st_mtime
         new_count = count_new_brands_since(cutoff)
     except Exception:
         return
     if new_count >= REBUILD_INDEX_NAG_THRESHOLD:
         logger.warning(
-            f"{new_count} new brands discovered since last index rebuild. "
-            f"Run `python src/scripts/rebuild_brand_index.py` to include them."
+            "%d new brands discovered since last index rebuild. "
+            "Run `python src/maintenance/rebuild_brand_index.py` to include them.",
+            new_count,
         )
 
 
@@ -82,14 +84,14 @@ def _mark_brand_verified_after_scrape(brand: str) -> None:
     if not brand:
         return
     try:
-        from src.caching.db import upsert_brand_to_registry
+        from src.cache.db import upsert_brand_to_registry
         upsert_brand_to_registry(
             canonical_name=brand,
             source="discovered_scraper",
             verified=1,
         )
     except Exception as e:
-        logger.debug(f"mark_brand_verified_after_scrape failed: {e}")
+        logger.debug("mark_brand_verified_after_scrape failed: %s", e)
 
 
 def run_pipeline(
@@ -166,55 +168,9 @@ def run_pipeline(
             )
 
     if query_type == "brand":
-        over_budget: list[dict] = []
-        for brand in brands:
-            projected = estimate_enrichment_needed(brand, cities)
-            if projected > MAX_ENRICHMENT_CALLS_PER_QUERY:
-                size = brand_sizes.get(brand, {})
-                over_budget.append({
-                    "brand": brand,
-                    "total_brand_size": size.get("total_stores_estimate"),
-                    "cities_requested": cities or ["all India"],
-                    "projected_api_calls": projected,
-                    "threshold": MAX_ENRICHMENT_CALLS_PER_QUERY,
-                    "already_enriched_cities": get_already_enriched_cities(brand),
-                    "tier_1_cities_available": TIER_1_CITIES,
-                    "suggestion": {
-                        "try_instead": (
-                            f"Start with one city, e.g., "
-                            f"'{brand} in {TIER_1_CITIES[0]}'"
-                        ),
-                    },
-                })
-
+        over_budget = check_query_budget(brands, cities, brand_sizes)
         if over_budget:
-            first = over_budget[0]
-            return {
-                "parsed_query": parsed,
-                "status": "blocked",
-                "reason": "query_too_large",
-                "message": (
-                    "This query is too large to run in a single pass. "
-                    "For now, please query city by city. As more queries "
-                    "run, the database will fill up and subsequent queries "
-                    "will be faster and cheaper."
-                ),
-                "scope": first,
-                "scopes": over_budget,
-                "raw_stores": pd.DataFrame(),
-                "summary_table": pd.DataFrame(),
-                "executive_summary": "Query blocked: projected enrichment too large.",
-                "comparison_table": None,
-                "density_tables": {},
-                "whitespace_tables": {},
-                "ic_memo_points": {},
-                "peer_benchmark": None,
-                "reconciliation_report": {"status": "blocked"},
-                "competitor_analysis": None,
-                "fetch_sources": {},
-                "brand_sizes": brand_sizes,
-                "enrichment_metadata": {},
-            }
+            return build_blocked_response(parsed, over_budget, brand_sizes)
 
     raw_records_by_brand: dict[str, pd.DataFrame] = {}
     fetch_sources: dict[tuple[str, str], str] = {}

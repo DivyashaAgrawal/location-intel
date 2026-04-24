@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from src.caching import db as _db  # noqa: E402
+from src.cache import db as _db  # noqa: E402
 
 SEED_PATH = ROOT / "data" / "brands_seed.csv"
 

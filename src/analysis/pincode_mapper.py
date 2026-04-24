@@ -13,7 +13,7 @@ import pandas as pd
 from geopy.exc import GeocoderTimedOut
 from geopy.geocoders import Nominatim
 
-from src.caching.config import NOMINATIM_USER_AGENT
+from src.config.settings import NOMINATIM_USER_AGENT
 from src.fetchers._common import extract_pincode
 
 logger = logging.getLogger(__name__)

@@ -19,7 +19,7 @@ import logging
 import sys
 from datetime import datetime
 
-from src.caching import db
+from src.cache import db
 
 logger = logging.getLogger(__name__)
 

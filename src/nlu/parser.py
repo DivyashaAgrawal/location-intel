@@ -5,7 +5,7 @@ import logging
 
 import requests as http_requests
 
-from src.caching.config import OLLAMA_BASE_URL, OLLAMA_MODEL
+from src.config.settings import OLLAMA_BASE_URL, OLLAMA_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ Input: "summary of dominos vs pizzahut in delhi"
 Output: {"query_type":"brand","brands":["Dominos Pizza","Pizza Hut"],"category":null,"search_query":"Dominos Pizza","geography":{"level":"city","filter":["Delhi"]},"metrics":["store_count","avg_rating","review_count","sentiment_summary"],"comparison":true}
 """
 
-# NOTE: Primary brand recognition is now handled by src.brand_resolver (FAISS +
+# NOTE: Primary brand recognition is now handled by src.nlu.brand_resolver (FAISS +
 # embeddings over the brand_registry table). This dict is a secondary fallback
 # used only by parse_query_fallback when Ollama is down AND the resolver either
 # failed or returned no match. Prefer adding new brands to data/brands_seed.csv.
@@ -250,10 +250,10 @@ def parse_query_with_ollama(query: str, brand_hint: dict | None = None) -> dict:
 
         return parsed
 
-    except http_requests.ConnectionError:
-        raise RuntimeError("Ollama not running. Start with: ollama serve")
+    except http_requests.ConnectionError as err:
+        raise RuntimeError("Ollama not running. Start with: ollama serve") from err
     except json.JSONDecodeError as e:
-        raise ValueError(f"LLM returned invalid JSON: {e}\nRaw: {raw[:200]}")
+        raise ValueError(f"LLM returned invalid JSON: {e}\nRaw: {raw[:200]}") from e
 
 
 def parse_with_predetermined_brand(query: str, canonical_brand: str) -> dict:
@@ -326,7 +326,7 @@ def parse_query_fallback(query: str) -> dict:
             geo_level = level
             break
 
-    from src.caching.config import INDIA_MAJOR_CITIES
+    from src.config.settings import INDIA_MAJOR_CITIES
 
     geo_filter = []
     for city in INDIA_MAJOR_CITIES:
@@ -367,7 +367,7 @@ def parse_query_fallback(query: str) -> dict:
 def _resolve_brand_hint(query: str) -> dict | None:
     """Try the brand resolver; swallow errors so the pipeline stays up."""
     try:
-        from src.brand_resolver import resolve_query as _resolve
+        from src.nlu.brand_resolver import resolve_query as _resolve
         return _resolve(query)
     except Exception as e:
         logger.warning(f"brand resolver failed: {e}")
@@ -382,7 +382,7 @@ def _extract_comparison_brands(query: str) -> list[str]:
     """
     import re
     try:
-        from src.brand_resolver import resolve_query as _resolve
+        from src.nlu.brand_resolver import resolve_query as _resolve
     except Exception:
         return []
 
@@ -430,7 +430,7 @@ def parse_query(query: str, brand_hint: dict | None = None) -> dict:
                 parsed["comparison"] = True
             logger.info(f"[NLU: resolver-high] {canonical}")
             try:
-                from src.caching.db import increment_brand_queried
+                from src.cache.db import increment_brand_queried
                 for b in parsed["brands"]:
                     increment_brand_queried(b)
             except Exception as e:

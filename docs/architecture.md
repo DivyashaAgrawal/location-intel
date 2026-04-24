@@ -91,7 +91,7 @@ index mapping.
 - Brand scraper runs mark their target as `verified=1`,
   `source='discovered_scraper'`.
 - After ~20 new additions, the pipeline logs a reminder to run
-  `python src/scripts/rebuild_brand_index.py`. Rebuilds are never
+  `python src/maintenance/rebuild_brand_index.py`. Rebuilds are never
   automatic — they'd add unacceptable latency to query-time.
 
 **Graceful degradation.** If `sentence-transformers` or `faiss` are not
@@ -134,11 +134,11 @@ hand-curated `BRAND_CATEGORY` map, it's inserted with a category tag,
 
 Brands with `times_seen < 3` and no `manually_verified` flag are returned
 but flagged `tentative`. Analysts curate via the sidebar (Confirm / Flag
-as noise) or the `src/scripts/review_competitors.py` CLI.
+as noise) or the `src/maintenance/review_competitors.py` CLI.
 
 ## 2. Persistent DB schema
 
-`src/caching/db.py` owns the tables in a single SQLite file. Stores
+`src/cache/db.py` owns the tables in a single SQLite file. Stores
 are normalised (one row per physical location across sources); rating
 snapshots are append-only so price/rating history can be derived later.
 `query_cache` maps a `(brand, city)` lookup to a list of `store_ids` so a
@@ -245,41 +245,60 @@ Layer 1 and reads from the DB directly. A later restart retries Redis.
 
 ## 4. Module layout
 
+Folders are grouped by pipeline stage, matching the flow diagram above.
+
 ```
 src/
-├── core/                         # persistence + cross-cutting config
-│   ├── config.py
-│   ├── db.py                     # stores, query_cache, source_cache, api_call_log
-│   ├── cache_manager.py          # smart_fetch + low-level get/set
+├── nlu/                          # understand the query
+│   ├── parser.py                 # NL -> structured params (Ollama + fallback)
+│   ├── brand_resolver.py         # phrase -> canonical brand (registry + FAISS)
+│   ├── brand_size.py             # cheap store-count estimate (cache/headline/scrape/Places)
+│   └── guardrails.py             # pre-fetch budget projection; block over-budget queries
+├── cache/                        # three-tier cache (Redis -> SQLite -> API)
+│   ├── manager.py                # smart_fetch + two-stage enrichment orchestration
+│   ├── db.py                     # stores, query_cache, source_cache, api_call_log, brand_metadata
 │   └── redis_cache.py
-├── fetchers/                     # adapter per external source
+├── fetchers/                     # one adapter per external source
 │   ├── google_places.py          # Places v1, primary maps
 │   ├── serper.py                 # Serper.dev fallback
 │   ├── osm.py                    # OpenStreetMap Overpass
-│   ├── brand_scraper.py          # brand-website registry
+│   ├── brand_scraper.py          # HTTP brand-website registry
+│   ├── brand_scraper_js.py       # Playwright-backed JS renderer
 │   ├── _common.py                # shared helpers (pincode, title parsing)
-│   └── multi_fetcher.py          # orchestrator that picks + chains adapters
+│   └── multi_fetcher.py          # orchestrator across adapters
+├── reconciler/                   # cross-source dedup + field merge
+│   └── reconciler.py
 ├── analysis/                     # pure analytical passes (no I/O)
-│   ├── reconciler.py
 │   ├── competitor.py
 │   ├── aggregator.py
 │   ├── market_analysis.py
 │   ├── sentiment.py
 │   └── pincode_mapper.py
-├── tools/                        # operational CLIs
-│   ├── warm_cache.py             # python -m src.tools.warm_cache
-│   └── export_data.py            # python -m src.tools.export_data
-├── nlu.py                        # NL -> structured query (Ollama + rule fallback)
-├── app.py                        # Streamlit UI (entry point)
+├── config/                       # env + cross-cutting config
+│   ├── settings.py               # API keys, tier-1 cities, thresholds
+│   └── logging_setup.py
+├── tools/                        # user-facing operational CLIs (console scripts)
+│   ├── warm_cache.py             # warm-cache / python -m src.tools.warm_cache
+│   └── export_data.py            # export-data / python -m src.tools.export_data
+├── maintenance/                  # developer one-off scripts (not console scripts)
+│   ├── build_seed_brands.py
+│   ├── load_brand_seed.py
+│   ├── rebuild_brand_index.py
+│   ├── refresh_brand_sizes.py
+│   ├── discover_apis.py
+│   └── review_competitors.py
+├── ui/
+│   └── streamlit_app.py          # Streamlit UI (entry point)
 ├── cli.py                        # console-script launcher (`location-intel`)
-├── logging_setup.py
 └── pipeline.py                   # end-to-end orchestrator
 ```
 
-The one shell bootstrap lives at `src/setup.sh` and is invoked
-by `make setup`. Operational Python CLIs live inside the package under
-`src/tools/` so they're importable from installed wheels and
-exposed as `warm-cache` / `export-data` console scripts.
+The one shell bootstrap lives at `setup.sh` and is invoked by `make setup`.
+
+`src/tools/` vs `src/maintenance/`: tools ship as console scripts in
+`pyproject.toml` (`warm-cache`, `export-data`) and are intended for
+day-to-day operation. Maintenance scripts are run directly by developers
+for one-off registry/index upkeep; they are not exposed as entry points.
 
 ## 5. Reconciliation priority matrix
 

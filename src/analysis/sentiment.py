@@ -12,7 +12,7 @@ import logging
 import pandas as pd
 import requests as http_requests
 
-from src.caching.config import OLLAMA_BASE_URL, OLLAMA_MODEL
+from src.config.settings import OLLAMA_BASE_URL, OLLAMA_MODEL
 
 logger = logging.getLogger(__name__)
 

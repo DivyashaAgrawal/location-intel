@@ -33,7 +33,7 @@ git clone <repo-url>
 cd location-intel
 make setup     # venv, deps, Ollama + model, Redis install + start, DB init
 make env       # opens .env in $EDITOR -- add GOOGLE_PLACES_API_KEY (SERPER_API_KEY optional)
-make run       # streamlit run src/core/app.py
+make run       # streamlit run src/ui/streamlit_app.py
 ```
 
 Run `make` on its own for the full list of commands.
@@ -53,29 +53,36 @@ the same query is served from Redis/DB at $0 cost.
 
 Full technical write-up in [docs/architecture.md](docs/architecture.md).
 
-Core modules:
+Core modules, grouped by pipeline stage:
 
 | Module | Role |
 |---|---|
-| `src/core/nlu.py` | NL -> structured query (Ollama + rule-based fallback) |
-| `src/brand_resolver.py` | Query phrase -> canonical brand via registry + FAISS |
-| `src/caching/cache_manager.py` | `smart_fetch`: Redis -> DB -> API |
-| `src/caching/db.py` | Persistent stores + query_cache + source_cache + api_call_log + brand_metadata + discovered_competitors |
-| `src/caching/config.py` | Env + constants (API keys, tier-1 cities, thresholds) |
-| `src/caching/redis_cache.py` | Redis hot-cache wrapper |
+| `src/nlu/parser.py` | NL -> structured query (Ollama + rule-based fallback) |
+| `src/nlu/brand_resolver.py` | Query phrase -> canonical brand via registry + FAISS |
+| `src/nlu/brand_size.py` | Fast cheap store-count estimate (cache + headline + scrape + Places) |
+| `src/nlu/guardrails.py` | Pre-fetch budget projection; blocks over-budget queries |
+| `src/cache/manager.py` | `smart_fetch`: Redis -> DB -> API |
+| `src/cache/db.py` | Persistent stores + query_cache + source_cache + api_call_log + brand_metadata + discovered_competitors |
+| `src/cache/redis_cache.py` | Redis hot-cache wrapper |
+| `src/config/settings.py` | Env + constants (API keys, tier-1 cities, thresholds) |
+| `src/config/logging_setup.py` | Logging configuration |
 | `src/fetchers/multi_fetcher.py` | Orchestrates adapters |
 | `src/fetchers/google_places.py` | Primary maps source (Places v1) |
 | `src/fetchers/serper.py` | Maps fallback |
 | `src/fetchers/osm.py` | OpenStreetMap POI |
 | `src/fetchers/brand_scraper.py` | Per-brand first-party scrapers |
 | `src/fetchers/brand_scraper_js.py` | Playwright-backed scraper for JS-rendered locators |
-| `src/analysis/reconciler.py` | Cross-source dedup + field merge |
+| `src/reconciler/reconciler.py` | Cross-source dedup + field merge |
 | `src/analysis/competitor.py` | Auto competitor + territory classification |
 | `src/analysis/aggregator.py` | Pincode / city / state rollup |
 | `src/analysis/market_analysis.py` | Density, whitespace, IC memo |
-| `src/core/app.py` | Streamlit UI |
-| `src/core/pipeline.py` | End-to-end orchestrator |
-| `src/core/cli.py` | Console-script launcher |
+| `src/analysis/pincode_mapper.py` | Reverse geocoding to pincode |
+| `src/analysis/sentiment.py` | Rating-derived sentiment |
+| `src/pipeline.py` | End-to-end orchestrator |
+| `src/cli.py` | Console-script launcher |
+| `src/ui/streamlit_app.py` | Streamlit UI |
+| `src/tools/` | End-user utilities installed as console scripts (`warm_cache`, `export_data`) |
+| `src/maintenance/` | Developer-run scripts — one-off registry/index rebuilds, API discovery |
 
 ---
 
@@ -120,11 +127,11 @@ playwright install chromium          # ~500 MB browser binary
 
 Once installed, `extraction_method: "playwright"` entries in the brand
 registry (Starbucks, KFC, Pizza Hut) run headless Chromium to render
-their store locators and parse the DOM. See `src/core/BRAND_SCRAPER_STATUS.md` for
+their store locators and parse the DOM. See `docs/BRAND_SCRAPER_STATUS.md` for
 the per-brand status and selector-verification checklist.
 
 To hunt for hidden JSON endpoints behind a JS locator and skip the
-browser entirely, run `python src/scripts/discover_apis.py`.
+browser entirely, run `python src/maintenance/discover_apis.py`.
 
 ---
 
@@ -161,13 +168,13 @@ The `brand_registry` table grows automatically:
   brand names with `source='discovered_category'`.
 - **Scraper runs** confirm a brand exists and mark it `verified=1` with
   `source='discovered_scraper'`.
-- **Manual additions**: edit `src/scripts/build_seed_brands.py` to extend
+- **Manual additions**: edit `src/maintenance/build_seed_brands.py` to extend
   the curated list, then re-run:
 
   ```bash
-  python src/scripts/build_seed_brands.py   # writes data/brands_seed.csv
-  python src/scripts/load_brand_seed.py     # upserts into brand_registry
-  python src/scripts/rebuild_brand_index.py # rebuilds FAISS index
+  python src/maintenance/build_seed_brands.py   # writes data/brands_seed.csv
+  python src/maintenance/load_brand_seed.py     # upserts into brand_registry
+  python src/maintenance/rebuild_brand_index.py # rebuilds FAISS index
   ```
 
 After 20+ new brands have accumulated since the last rebuild, the pipeline
@@ -207,7 +214,7 @@ heavy HF usage, add a free token:
 
 `sentence-transformers` / `huggingface_hub` pick it up automatically.
 The unauthenticated-hub warning is suppressed by default in
-`brand_resolver.py`, so it's purely a speed consideration.
+`src/nlu/brand_resolver.py`, so it's purely a speed consideration.
 
 ---
 
@@ -249,7 +256,7 @@ make type
 
 **Adding a new brand to the registry**
 
-- Edit `KNOWN_BRANDS` in `src/core/nlu.py` for NL recognition.
+- Edit `KNOWN_BRANDS` in `src/nlu/parser.py` for NL recognition.
 - Edit `BRAND_REGISTRY` in `src/fetchers/brand_scraper.py` with
   `store_locator_url`, `extraction_method`, `domain`, `last_verified`.
 - If `extraction_method` is `html`, the shared Ollama HTML-to-JSON parser
@@ -258,6 +265,16 @@ make type
 **Extending the competitor map**
 
 - Edit `COMPETITOR_MAP` in `src/analysis/competitor.py`.
+
+**`src/tools/` vs `src/maintenance/`**
+
+- `src/tools/` — user-facing operational utilities that ship with the package
+  and are wired as console scripts in `pyproject.toml` (`warm-cache`,
+  `export-data`). Use these during day-to-day operation.
+- `src/maintenance/` — developer-run one-off scripts for registry and index
+  maintenance (`build_seed_brands`, `load_brand_seed`, `rebuild_brand_index`,
+  `refresh_brand_sizes`, `discover_apis`, `review_competitors`). Not
+  installed as entry points; run directly with `python src/maintenance/<name>.py`.
 - Each entry is `brand -> [direct_competitors]`, max 5 per brand.
 
 ---
@@ -303,12 +320,12 @@ python -m src.tools.export_data --format csv --output /tmp/stores.csv
 - **Brand-scraper registry is 12 brands.** Anything outside the registry
   uses Google Places + OSM; the reconciler produces good output but
   addresses are less clean than a first-party source. See
-  [src/core/BRAND_SCRAPER_STATUS.md](src/core/BRAND_SCRAPER_STATUS.md) for per-brand status.
+  [docs/BRAND_SCRAPER_STATUS.md](docs/BRAND_SCRAPER_STATUS.md) for per-brand status.
 - **Playwright adds ~500 MB to the install footprint.** The `[playwright]`
   extra and `playwright install chromium` pull in a headless browser.
   Without it, JS-rendered brands fall through to Google Places.
 - **Selectors for JS-rendered brands are best-guess** until manually
-  verified against the live site. Run `src/scripts/discover_apis.py` to find
+  verified against the live site. Run `src/maintenance/discover_apis.py` to find
   hidden JSON endpoints or inspect the rendered DOM to update selectors.
 - **No "all India" scans.** Queries projected to exceed 100 Google Places
   enrichment calls are blocked with a city-level suggestion.

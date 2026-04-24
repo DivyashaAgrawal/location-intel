@@ -127,7 +127,7 @@ def get_competitors(brand: str, max_n: int = 3) -> list[str]:
     discovered: list[str] = []
     if category:
         try:
-            from src.caching import db as _db
+            from src.cache import db as _db
             rows = _db.get_discovered_competitors(category)
         except Exception:
             rows = []
@@ -356,7 +356,7 @@ def run_competitor_analysis(
     tentative_flags: dict[str, bool] = {}
     if category:
         try:
-            from src.caching import db as _db
+            from src.cache import db as _db
             rows = _db.get_discovered_competitors(category)
         except Exception:
             rows = []

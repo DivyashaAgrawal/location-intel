@@ -246,7 +246,7 @@ fi
 
 # ---------- 6. DB init ----------
 info "Initialising SQLite DB..."
-python -c "from src.caching import db; db.init_db()"
+python -c "from src.cache import db; db.init_db()"
 
 # ---------- summary ----------
 echo
@@ -256,5 +256,5 @@ cat <<'EOF'
 Next steps:
   1. Edit .env and add your GOOGLE_PLACES_API_KEY (and optionally SERPER_API_KEY).
   2. Activate the venv:  source venv/bin/activate
-  3. Run the app:        streamlit run src/core/app.py
+  3. Run the app:        streamlit run src/ui/streamlit_app.py
 EOF

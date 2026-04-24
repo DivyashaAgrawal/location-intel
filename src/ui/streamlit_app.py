@@ -3,8 +3,8 @@ import io
 import pandas as pd
 import streamlit as st
 
-from src.caching import cache_manager
-from src.core.pipeline import run_pipeline
+from src.cache import manager as cache_manager
+from src.pipeline import run_pipeline
 
 
 def _render_blocked(result: dict) -> None:
@@ -113,7 +113,7 @@ def render() -> None:
 
         st.divider()
         with st.expander("Discovered competitors", expanded=False):
-            from src.caching import db as _db
+            from src.cache import db as _db
             rows = _db.list_all_discovered_competitors()
             if not rows:
                 st.caption(

@@ -18,8 +18,8 @@ import time
 
 import requests
 
-from src.caching import db
-from src.caching.config import GOOGLE_PLACES_API_KEY, INDIA_MAJOR_CITIES
+from src.cache import db
+from src.config.settings import GOOGLE_PLACES_API_KEY, INDIA_MAJOR_CITIES
 from src.fetchers._common import extract_pincode
 
 logger = logging.getLogger(__name__)

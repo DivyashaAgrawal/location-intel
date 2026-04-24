@@ -1,23 +1,25 @@
 from __future__ import annotations
 
-from src.caching import cache_manager, config, db
+from src.cache import db
+from src.config import settings as config
+from src.nlu import brand_size
 
 
 def test_small_brand_under_threshold(temp_db, no_api_keys):
     db.upsert_brand_metadata("SmallBrand", 30, "manual", 1.0)
-    projected = cache_manager.estimate_enrichment_needed("SmallBrand", [])
+    projected = brand_size.estimate_enrichment_needed("SmallBrand", [])
     assert projected <= config.MAX_ENRICHMENT_CALLS_PER_QUERY
 
 
 def test_large_brand_all_india_over_threshold(temp_db, no_api_keys):
     db.upsert_brand_metadata("HugeBrand", 500, "manual", 1.0)
-    projected = cache_manager.estimate_enrichment_needed("HugeBrand", [])
+    projected = brand_size.estimate_enrichment_needed("HugeBrand", [])
     assert projected > config.MAX_ENRICHMENT_CALLS_PER_QUERY
 
 
 def test_large_brand_single_city_under_threshold(temp_db, no_api_keys):
     db.upsert_brand_metadata("HugeBrand", 500, "manual", 1.0)
-    projected = cache_manager.estimate_enrichment_needed("HugeBrand", ["Mumbai"])
+    projected = brand_size.estimate_enrichment_needed("HugeBrand", ["Mumbai"])
     assert projected <= config.MAX_ENRICHMENT_CALLS_PER_QUERY
 
 
@@ -34,7 +36,7 @@ def test_enriched_stores_reduce_projection(temp_db, no_api_keys):
             "longitude": 72.8 + i * 0.001,
         })
         db.mark_store_enriched(sid, source="google_places")
-    projected = cache_manager.estimate_enrichment_needed("PartialBrand", ["Mumbai"])
+    projected = brand_size.estimate_enrichment_needed("PartialBrand", ["Mumbai"])
     # share = 1/20 * 500 = 25; already enriched (Mumbai) = 80 -> max(0, 25-80) = 0.
     assert projected == 0
 
@@ -42,7 +44,7 @@ def test_enriched_stores_reduce_projection(temp_db, no_api_keys):
 def test_pipeline_blocks_large_queries(temp_db, no_api_keys, monkeypatch):
     db.upsert_brand_metadata("BlockBrand", 500, "manual", 1.0)
 
-    import src.core.pipeline as pl
+    import src.pipeline as pl
 
     monkeypatch.setattr(
         pl,
@@ -69,7 +71,7 @@ def test_pipeline_blocks_large_queries(temp_db, no_api_keys, monkeypatch):
 def test_pipeline_allows_single_city_query(temp_db, no_api_keys, monkeypatch):
     db.upsert_brand_metadata("BlockBrand", 500, "manual", 1.0)
 
-    import src.core.pipeline as pl
+    import src.pipeline as pl
 
     monkeypatch.setattr(
         pl,
@@ -98,7 +100,7 @@ def test_blocked_response_includes_already_enriched_cities(temp_db, no_api_keys,
         })
         db.mark_store_enriched(sid)
 
-    import src.core.pipeline as pl
+    import src.pipeline as pl
 
     monkeypatch.setattr(
         pl,

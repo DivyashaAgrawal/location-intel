@@ -14,9 +14,10 @@ import argparse
 import logging
 from pathlib import Path
 
-from src.caching import cache_manager, db
-from src.caching.db import SOURCE_COST_USD
-from src.core import logging_setup
+from src.cache import db
+from src.cache import manager as cache_manager
+from src.cache.db import SOURCE_COST_USD
+from src.config import logging_setup
 
 logging_setup.configure()
 logger = logging.getLogger("warm_cache")

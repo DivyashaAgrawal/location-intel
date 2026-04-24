@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from src.analysis import competitor
-from src.caching import db
+from src.cache import db
 from src.fetchers import multi_fetcher
 
 

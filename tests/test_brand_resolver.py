@@ -1,4 +1,4 @@
-"""Tests for src.brand_resolver.
+"""Tests for src.nlu.brand_resolver.
 
 The embedding path is exercised only when sentence-transformers + faiss are
 importable; otherwise those tests fall back to substring behaviour. The
@@ -14,7 +14,7 @@ import pytest
 @pytest.fixture
 def seeded_registry(temp_db):
     """Seed a miniature registry so the resolver has something to match."""
-    from src.caching import db as _db
+    from src.cache import db as _db
 
     brands = [
         ("Biryani By Kilo", ["BBK", "Biryani By Kilo Ltd"], "biryani"),
@@ -52,7 +52,7 @@ def seeded_registry(temp_db):
 @pytest.fixture
 def resolver_reset():
     """Reset cached model/index/metadata between tests to avoid cross-contamination."""
-    import src.brand_resolver as br
+    import src.nlu.brand_resolver as br
     br.reset_caches()
     yield
     br.reset_caches()
@@ -68,7 +68,7 @@ def _has_embeddings() -> bool:
 
 
 def test_extract_candidates_strips_stopwords():
-    from src.brand_resolver import extract_candidate_phrases
+    from src.nlu.brand_resolver import extract_candidate_phrases
     candidates = extract_candidate_phrases(
         "get me pincode wise details on biryani by kilo"
     )
@@ -80,13 +80,13 @@ def test_extract_candidates_strips_stopwords():
 
 
 def test_extract_candidates_empty_query_returns_empty():
-    from src.brand_resolver import extract_candidate_phrases
+    from src.nlu.brand_resolver import extract_candidate_phrases
     assert extract_candidate_phrases("") == []
     assert extract_candidate_phrases("   ") == []
 
 
 def test_extract_candidates_removes_geography():
-    from src.brand_resolver import extract_candidate_phrases
+    from src.nlu.brand_resolver import extract_candidate_phrases
     candidates = extract_candidate_phrases("dominos in delhi and mumbai")
     assert "dominos" in candidates
     assert "delhi" not in candidates
@@ -94,7 +94,7 @@ def test_extract_candidates_removes_geography():
 
 
 def test_substring_match_high_confidence(seeded_registry, resolver_reset):
-    from src.brand_resolver import resolve_query
+    from src.nlu.brand_resolver import resolve_query
     r = resolve_query("get me pincode wise details on biryani by kilo")
     assert r["match_found"] is True
     assert r["confidence"] == "high"
@@ -103,14 +103,14 @@ def test_substring_match_high_confidence(seeded_registry, resolver_reset):
 
 
 def test_alias_match_via_bbk(seeded_registry, resolver_reset):
-    from src.brand_resolver import resolve_query
+    from src.nlu.brand_resolver import resolve_query
     r = resolve_query("pincode wise details on bbk")
     assert r["match_found"] is True
     assert r["canonical_brand"] == "Biryani By Kilo"
 
 
 def test_category_query_returns_no_specific_brand(seeded_registry, resolver_reset):
-    from src.brand_resolver import resolve_query
+    from src.nlu.brand_resolver import resolve_query
     r = resolve_query("pizza near me")
     # The resolver must not claim a specific brand for a bare category word.
     assert r["canonical_brand"] is None
@@ -118,20 +118,20 @@ def test_category_query_returns_no_specific_brand(seeded_registry, resolver_rese
 
 
 def test_common_noun_does_not_match(seeded_registry, resolver_reset):
-    from src.brand_resolver import resolve_query
+    from src.nlu.brand_resolver import resolve_query
     r = resolve_query("bakery in delhi")
     assert r["confidence"] == "none"
 
 
 def test_empty_query_returns_none_match(seeded_registry, resolver_reset):
-    from src.brand_resolver import resolve_query
+    from src.nlu.brand_resolver import resolve_query
     r = resolve_query("")
     assert r["match_found"] is False
     assert r["confidence"] == "none"
 
 
 def test_fallback_path_direct(seeded_registry, resolver_reset):
-    from src.brand_resolver import resolve_query_fallback
+    from src.nlu.brand_resolver import resolve_query_fallback
     r = resolve_query_fallback("domino's in mumbai")
     assert r["match_found"] is True
     assert r["canonical_brand"] == "Dominos Pizza"
@@ -139,7 +139,7 @@ def test_fallback_path_direct(seeded_registry, resolver_reset):
 
 
 def test_fallback_category_only(seeded_registry, resolver_reset):
-    from src.brand_resolver import resolve_query_fallback
+    from src.nlu.brand_resolver import resolve_query_fallback
     r = resolve_query_fallback("best pizza in town")
     # No specific brand name as substring -> no match.
     assert r["match_found"] is False
@@ -150,7 +150,7 @@ def test_fallback_used_when_embeddings_missing(
     seeded_registry, resolver_reset, monkeypatch
 ):
     """If we pretend embeddings are unavailable, substring fallback should kick in."""
-    import src.brand_resolver as br
+    import src.nlu.brand_resolver as br
     br.reset_caches()
     monkeypatch.setattr(br, "_check_embeddings_available", lambda: False)
     r = br.resolve_query("starbucks in mumbai")
@@ -162,7 +162,7 @@ def test_comparison_query_finds_at_least_one_brand(
     seeded_registry, resolver_reset
 ):
     """Resolver returns a single best match; NLU splits on 'vs' to find the others."""
-    from src.brand_resolver import resolve_query
+    from src.nlu.brand_resolver import resolve_query
     r = resolve_query("third wave coffee vs blue tokai in bangalore")
     assert r["match_found"] is True
     assert r["canonical_brand"] in ("Third Wave Coffee", "Blue Tokai")
@@ -173,8 +173,8 @@ def test_embedding_path_for_unregistered_misspelling(
     seeded_registry, resolver_reset, tmp_path, monkeypatch
 ):
     """Build a tiny index at runtime and verify the embedding path triggers."""
-    from src.scripts.rebuild_brand_index import build_index
-    import src.brand_resolver as br
+    import src.nlu.brand_resolver as br
+    from src.maintenance.rebuild_brand_index import build_index
 
     idx_path = tmp_path / "brand_index.faiss"
     meta_path = tmp_path / "brand_index_metadata.json"
@@ -195,5 +195,5 @@ def test_stopwords_prevent_instruction_words_from_matching(
     seeded_registry, resolver_reset
 ):
     """Pure instruction queries should produce no brand candidates."""
-    from src.brand_resolver import extract_candidate_phrases
+    from src.nlu.brand_resolver import extract_candidate_phrases
     assert extract_candidate_phrases("get me the pincode wise summary") == []

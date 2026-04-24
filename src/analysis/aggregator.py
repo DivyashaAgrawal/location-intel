@@ -158,8 +158,8 @@ def generate_executive_summary(df: pd.DataFrame, brand: str) -> str:
 
     total_stores = len(df)
     cities = df["city"].nunique() if "city" in df.columns else 0
-    avg_rating = df["rating"].mean() if "rating" in df.columns else 0
-    total_reviews = df["review_count"].sum() if "review_count" in df.columns else 0
+    avg_rating = df["rating"].dropna().mean() if "rating" in df.columns else None
+    total_reviews = int(df["review_count"].sum()) if "review_count" in df.columns else 0
 
     top_city = ""
     if "city" in df.columns:
@@ -167,17 +167,18 @@ def generate_executive_summary(df: pd.DataFrame, brand: str) -> str:
         if len(city_counts) > 0:
             top_city = city_counts.index[0]
 
+    rating_str = f"{avg_rating:.1f}/5" if avg_rating is not None and pd.notna(avg_rating) else "N/A"
     summary = (
         f"{brand}: {total_stores} stores across {cities} cities. "
-        f"Average rating: {avg_rating:.1f}/5 ({int(total_reviews):,} total reviews). "
+        f"Average rating: {rating_str} ({total_reviews:,} total reviews). "
     )
 
     if top_city:
         summary += f"Highest concentration in {top_city} ({city_counts.iloc[0]} stores)."
 
-    if avg_rating >= 4.0 and total_stores < 50:
+    if avg_rating is not None and pd.notna(avg_rating) and avg_rating >= 4.0 and total_stores < 50:
         summary += " High ratings with limited footprint suggest strong expansion potential."
-    elif avg_rating < 3.5:
+    elif avg_rating is not None and pd.notna(avg_rating) and avg_rating < 3.5:
         summary += " Below-average ratings may indicate operational challenges to address before expansion."
 
     return summary
